@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ContentBlock } from "@agentclientprotocol/sdk";
-import { acpPromptToPiMessage } from "@pi-acp/acp/translate/prompt.js";
+import { acpPromptToPiMessage } from "@pi-acp/acp/translate/prompt";
 
 describe("acpPromptToPiMessage", () => {
 	test("concatenates text and resource links", () => {

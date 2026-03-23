@@ -13,7 +13,7 @@ import {
 import type { AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
 import type { AssistantMessageEvent, ToolCall } from "@mariozechner/pi-ai";
 import type { AgentSession, AgentSessionEvent } from "@mariozechner/pi-coding-agent";
-import { toolResultToText } from "@pi-acp/acp/translate/pi-tools.js";
+import { toolResultToText } from "@pi-acp/acp/translate/pi-tools";
 import * as z from "zod";
 
 export type StopReason = "end_turn" | "cancelled" | "max_tokens" | "error";

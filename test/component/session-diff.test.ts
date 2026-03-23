@@ -3,8 +3,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentSession } from "@mariozechner/pi-coding-agent";
-import { PiAcpSession } from "@pi-acp/acp/session.js";
-import { asAgentConn, FakeAgentSession, FakeAgentSideConnection } from "../helpers/fakes.js";
+import { PiAcpSession } from "@pi-acp/acp/session";
+import { asAgentConn, FakeAgentSession, FakeAgentSideConnection } from "../helpers/fakes";
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 

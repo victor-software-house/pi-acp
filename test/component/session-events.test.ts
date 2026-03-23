@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentSession } from "@mariozechner/pi-coding-agent";
-import { PiAcpSession } from "@pi-acp/acp/session.js";
-import { asAgentConn, FakeAgentSession, FakeAgentSideConnection } from "../helpers/fakes.js";
+import { PiAcpSession } from "@pi-acp/acp/session";
+import { asAgentConn, FakeAgentSession, FakeAgentSideConnection } from "../helpers/fakes";
 
 function createSession(cwd = process.cwd()) {
 	const conn = new FakeAgentSideConnection();

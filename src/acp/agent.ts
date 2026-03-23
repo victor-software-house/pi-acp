@@ -40,13 +40,13 @@ import {
 	VERSION as PI_VERSION,
 	SessionManager as PiSessionManager,
 } from "@mariozechner/pi-coding-agent";
-import { buildAuthMethods } from "@pi-acp/acp/auth.js";
-import { piAgentDir, quietStartupEnabled, skillCommandsEnabled } from "@pi-acp/acp/pi-settings.js";
-import { PiAcpSession, SessionManager } from "@pi-acp/acp/session.js";
-import { extractAssistantText, extractUserMessageText } from "@pi-acp/acp/translate/pi-messages.js";
-import { toolResultToText } from "@pi-acp/acp/translate/pi-tools.js";
-import { acpPromptToPiMessage } from "@pi-acp/acp/translate/prompt.js";
-import { hasPiAuthConfigured } from "@pi-acp/pi-auth/status.js";
+import { buildAuthMethods } from "@pi-acp/acp/auth";
+import { piAgentDir, quietStartupEnabled, skillCommandsEnabled } from "@pi-acp/acp/pi-settings";
+import { PiAcpSession, SessionManager } from "@pi-acp/acp/session";
+import { extractAssistantText, extractUserMessageText } from "@pi-acp/acp/translate/pi-messages";
+import { toolResultToText } from "@pi-acp/acp/translate/pi-tools";
+import { acpPromptToPiMessage } from "@pi-acp/acp/translate/prompt";
+import { hasPiAuthConfigured } from "@pi-acp/pi-auth/status";
 
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
