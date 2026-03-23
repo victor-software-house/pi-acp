@@ -1,7 +1,9 @@
 # TODO
 
-Gap inventory derived from comparison with `zed-industries/claude-agent-acp`.
-See `docs/engineering/claude-acp-comparison.md` for the full analysis.
+Gap inventory derived from `GAPS.md`, `docs/engineering/claude-acp-comparison.md`,
+and direct analysis of `zed-industries/claude-agent-acp` and `zed-industries/codex-acp`.
+
+Execution plan: `PLAN.md`.
 
 Legend:
 
@@ -10,91 +12,118 @@ Legend:
 
 ---
 
-## Phase A: Fix tool output rendering (critical)
+## Phase 1: Per-tool output formatting (critical)
 
 Bash output is invisible/collapsed in Zed because pi-acp sends raw text
-without formatting. Claude ACP wraps bash output in `` ```console `` code
-fences and provides per-tool result formatting.
+without formatting. Both reference implementations dispatch formatting by
+tool name: `` ```console `` for bash, `markdownEscape()` for read, code
+fences for errors.
 
-- [ ] Replace generic `toolResultToText()` with per-tool content formatters
-- [ ] Bash results: wrap output in `` ```console\n{output}\n``` `` code fence
-- [ ] Bash results: extract stdout/stderr separately, include exit code on non-zero
-- [ ] Bash errors: wrap in `` ```\n{error}\n``` `` code fence with `status: "failed"`
-- [ ] Read results: apply markdown escaping to prevent file content rendering as markdown
-- [ ] Read results: preserve structured content blocks (text, images) from pi tool results
-- [ ] Error results (all tools): wrap error text in code fences for visual distinction
-- [ ] Emit per-tool formatted content in both `handleToolEnd` (live) and replay paths
-- [ ] Add tests for bash output formatting (normal, error, empty output)
-- [ ] Add tests for read output formatting with markdown-sensitive content
-- [ ] Add tests for error output formatting across tool types
+- [ ] Create `src/acp/translate/tool-content.ts` with `formatToolContent(toolName, result, isError)`
+- [ ] Bash results: extract stdout/stderr, wrap in `` ```console\n{output}\n``` ``
+- [ ] Bash results: append `exit code: N` on non-zero exit
+- [ ] Bash errors: wrap in `` ```\n{error}\n``` `` with `status: "failed"`
+- [ ] Tmux results: same formatting as bash (`` ```console ``)
+- [ ] Read results: apply `markdownEscape()` to text blocks
+- [ ] Read results: preserve image content blocks unchanged
+- [ ] LSP results: wrap in `` ```\n{text}\n``` ``
+- [ ] Error results (all tools): wrap error text in code fences
+- [ ] Edit/write: return empty array (diff path handles these)
+- [ ] Fallback: plain text content for unknown tools
+- [ ] Add `markdownEscape()` (port from claude-agent-acp `tools.ts`)
+- [ ] Add focused extractors: `extractBashOutput()`, `extractTextContent()`, `extractContentBlocks()`
+- [ ] Update `handleToolEnd()` in `session.ts` to use `formatToolContent`
+- [ ] Update `handleToolUpdate()` to accept `toolName` parameter
+- [ ] Update `handleToolUpdate()` to wrap bash/tmux output in `` ```console ``
+- [ ] Update `replaySessionHistory()` in `agent.ts` to use `formatToolContent`
+- [ ] Remove `toolResultToText()` from `pi-tools.ts`
+- [ ] Add tests: bash output (normal, error, empty, non-zero exit)
+- [ ] Add tests: read output (plain text, markdown-sensitive content, images)
+- [ ] Add tests: error formatting across tool types
+- [ ] Add tests: streaming bash formatting in `handleToolUpdate`
+- [ ] Add tests: edit/write still get diff content (not affected by new formatter)
+- [ ] Add tests: replay path produces formatted content
 
-## Phase B: Terminal content lifecycle
+## Phase 2: Terminal content lifecycle
 
-Zed supports terminal rendering via `_meta.terminal_*` extensions. Both
-claude-agent-acp and codex-acp implement the 3-phase lifecycle. Even without
-terminal support, the `` ```console `` fallback is necessary.
+Both reference implementations emit a 3-phase terminal lifecycle when the
+client supports it. codex-acp includes `cwd` in `terminal_info`. Both fall
+back to code fences when terminal is not supported.
 
-- [ ] Store `clientCapabilities` from `initialize` request on the agent instance
+- [ ] Store `clientCapabilities` from `initialize` on `PiAcpAgent`
 - [ ] Detect `clientCapabilities._meta.terminal_output === true`
-- [ ] When terminal output IS supported:
-  - [ ] Emit `tool_call` with `content: [{ type: "terminal", terminalId }]` and `_meta.terminal_info`
-  - [ ] Emit `tool_call_update` with `_meta.terminal_output` for bash streaming data
-  - [ ] Emit `tool_call_update` with `_meta.terminal_exit` on bash completion (exit_code, signal)
-- [ ] When terminal output is NOT supported:
-  - [ ] Use `` ```console `` code fence fallback (Phase A)
-- [ ] Pass terminal support flag through to `PiAcpSession`
-- [ ] Add tests for terminal lifecycle (info -> output -> exit)
-- [ ] Add tests for fallback to code fences when terminal not supported
+- [ ] Add `supportsTerminalOutput` flag to `PiAcpSessionOpts`
+- [ ] When terminal IS supported (bash/tmux):
+  - [ ] `handleToolStart`: emit `content: [{ type: "terminal", terminalId }]` + `_meta.terminal_info { terminal_id, cwd }`
+  - [ ] `handleToolUpdate`: emit `_meta.terminal_output { terminal_id, data }` (no content, meta only)
+  - [ ] `handleToolEnd`: emit `_meta.terminal_exit { terminal_id, exit_code, signal: null }` alongside status
+- [ ] When terminal NOT supported: use Phase 1 `` ```console `` fallback
+- [ ] Add tests: terminal lifecycle sequence (info -> output -> exit)
+- [ ] Add tests: cwd included in terminal_info
+- [ ] Add tests: no content field when terminal_output meta is present
+- [ ] Add tests: fallback to code fences without terminal support
 
-## Phase C: Tool call metadata (`_meta`)
+## Phase 3: Tool call `_meta` and kind/title gaps
 
-Claude ACP includes `_meta.claudeCode.toolName` on every tool_call and
-tool_call_update. Zed may use this for icon selection or rendering mode.
+claude-agent-acp includes `_meta.claudeCode.toolName` on every tool emission.
+GAPS.md identifies kind and title gaps for lsp, tmux, and context tools.
 
-- [ ] Add `_meta` with tool name to `tool_call` emissions in `handleMessageUpdate`
-- [ ] Add `_meta` with tool name to `tool_call` emissions in `handleToolStart`
-- [ ] Add `_meta` with tool name to `tool_call_update` emissions in `handleToolUpdate`
-- [ ] Add `_meta` with tool name to `tool_call_update` emissions in `handleToolEnd`
-- [ ] Add `_meta` with tool name to replayed tool calls in `replaySessionHistory`
-- [ ] Use `piAcp` namespace (not `claudeCode`) for `_meta` fields
-- [ ] Add tests for `_meta` presence on tool call emissions
+- [ ] Add `_meta: { piAcp: { toolName } }` to `tool_call` in `handleMessageUpdate`
+- [ ] Add `_meta: { piAcp: { toolName } }` to `tool_call` in `handleToolStart`
+- [ ] Add `_meta: { piAcp: { toolName } }` to `tool_call_update` in `handleToolUpdate`
+- [ ] Add `_meta: { piAcp: { toolName } }` to `tool_call_update` in `handleToolEnd`
+- [ ] Add `_meta: { piAcp: { toolName } }` to replayed tool calls in `replaySessionHistory`
+- [ ] Merge `_meta` correctly when terminal meta is also present (no overwriting)
+- [ ] Fix `toToolKind`: `lsp` -> `search`, `tmux` -> `execute`
+- [ ] Fix `buildToolTitle` for `lsp`: `Definition src/index.ts:42`, `References MyClass`, etc.
+- [ ] Fix `buildToolTitle` for `tmux`: `Tmux: <command>`, `Tmux <action> <name>`, etc.
+- [ ] Fix `buildToolTitle` for `context_tag`: `Tag <name>`
+- [ ] Fix `buildToolTitle` for `context_log`: `Context log`
+- [ ] Fix `buildToolTitle` for `context_checkout`: `Checkout <target>`
+- [ ] Fix `buildToolTitle` for `claudemon`: `Check quota`
+- [ ] Add tests: `_meta.piAcp.toolName` present on all emissions
+- [ ] Add tests: `_meta` merges correctly with terminal `_meta`
+- [ ] Add tests: lsp kind/title for each action type
+- [ ] Add tests: tmux kind/title for each action type
+- [ ] Add tests: context tool titles
 
-## Phase D: Streaming bash output formatting
+## Phase 4: Client capabilities
 
-pi-acp already streams bash output incrementally via `tool_execution_update`
-events (pi's `onUpdate` callback). But the streaming content is unformatted.
+Both reference implementations store and use `clientCapabilities` for feature
+detection and auth method selection.
 
-- [ ] Format streaming bash output in `handleToolUpdate` as `` ```console `` code fence
-- [ ] Handle the update-vs-replace semantics: each update replaces the previous
-      content (pi sends rolling tail buffer), so wrap each update independently
-- [ ] Verify Zed renders `tool_call_update` content replacements correctly
-- [ ] Add tests for streaming bash output formatting
+- [ ] Create `ClientCapabilityFlags` interface (`terminalOutput`, `terminalAuth`, `gatewayAuth`)
+- [ ] Create `parseClientCapabilities(caps)` function
+- [ ] Store parsed capabilities on `PiAcpAgent` instance from `initialize`
+- [ ] Pass relevant flags to `PiAcpSession` via opts
+- [ ] Adapt auth methods in `initialize` response based on capabilities
+- [ ] Support `_meta.terminal-auth` with command metadata (following claude-agent-acp pattern)
+- [ ] Add tests: capability parsing from various client configs
+- [ ] Add tests: terminal output flag propagated to sessions
+- [ ] Add tests: auth methods vary based on capabilities
+- [ ] Add tests: null/undefined/missing capabilities handled gracefully
 
-## Phase E: Read tool content handling
+## Phase 5: Streaming bash output formatting
 
-- [ ] Implement `markdownEscape()` for read tool results (escape headings,
-      links, code fences, HTML tags in file content)
-- [ ] Handle image content blocks from read results (pi supports reading images)
-- [ ] Preserve line offset information in read result content when available
-- [ ] Add tests for markdown escaping edge cases
+codex-acp accumulates per-command output and sends the full buffer wrapped
+in a code fence on each streaming update. pi already has rolling tail buffer
+but sends raw text.
 
-## Phase F: Client capabilities
+- [ ] Add `toolCallNames: Map<string, string>` to `PiAcpSession` (toolCallId -> toolName)
+- [ ] Populate map in `handleToolStart`, clean up in `handleToolEnd`
+- [ ] In `handleToolUpdate`, look up tool name from map
+- [ ] Bash/tmux without terminal: wrap accumulated output in `` ```console ``
+- [ ] Bash/tmux with terminal: emit `_meta.terminal_output` only (no content)
+- [ ] Other tools: emit plain text content (no wrapping)
+- [ ] Each update is self-contained (full buffer, not delta) -- matches pi's behavior
+- [ ] Add tests: streaming bash with `` ```console `` wrapping
+- [ ] Add tests: streaming bash with terminal_output metadata
+- [ ] Add tests: streaming non-bash tools remain plain text
+- [ ] Add tests: toolCallNames map lifecycle (populated, used, cleaned up)
 
-Claude ACP stores and uses `clientCapabilities` for feature detection and
-auth method selection. pi-acp currently ignores them.
+## Phase 6: Protocol test coverage
 
-- [ ] Store `clientCapabilities` from `initialize` on the `PiAcpAgent` instance
-- [ ] Pass relevant capabilities to `PiAcpSession` on creation
-- [ ] Use `_meta.terminal_output` for terminal content lifecycle (Phase B)
-- [ ] Use `auth.terminal` and `_meta.terminal-auth` for auth method selection
-- [ ] Expose capability flags via a typed interface (not raw object access)
-- [ ] Add tests for capability detection and feature toggling
-
-## Phase G: Protocol test coverage
-
-Remaining test gaps from v0.2.0. These require an active session with a
-real or sufficiently faked `AgentSession`.
-
+- [ ] Extend `FakeAgentSession` to support `prompt()`, `setModel()`, `setThinkingLevel()`
 - [ ] Add protocol-surface tests for `session/prompt`
 - [ ] Add protocol-surface tests for `setSessionConfigOption`
 - [ ] Add protocol-surface tests for `setSessionMode`
@@ -102,36 +131,31 @@ real or sufficiently faked `AgentSession`.
 - [ ] Add tests for `available_commands_update` emission
 - [ ] Add tests for `config_option_update` emission
 
-## Phase H: MCP server wiring
+## Phase 7: MCP server wiring (blocked on pi SDK)
 
-Main remaining MUST-level ACP compliance gap. Requires upstream pi SDK support
-for per-session MCP server configuration.
+- [ ] Convert ACP `McpServer[]` to pi MCP config format (following claude-agent-acp pattern)
+- [ ] Wire through to `createAgentSession()` when SDK supports it
+- [ ] Test with stdio MCP server
+- [ ] Test with HTTP/SSE MCP server
+- [ ] Track upstream pi SDK issue/PR
 
-- [ ] Wire `mcpServers` from `session/new` and `session/load` through to `createAgentSession()`
-- [ ] Test with at least one MCP server (e.g. filesystem)
-- [ ] Track upstream pi SDK issue/PR for `mcpServers` support in `createAgentSession()`
+## Phase 8: Optional ACP features (deferred)
 
-## Phase I: Optional ACP features
-
-Lower priority. Implement when upstream pi support exists or clients need them.
-
-- [ ] `session/request_permission` -- bridge to pi's extension permission system
-- [ ] `agent_plan` updates -- requires pi to expose a planning surface
-- [ ] ACP filesystem delegation (`readTextFile` / `writeTextFile`) -- allows
-      reading unsaved editor buffers instead of on-disk files
-- [ ] ACP terminal delegation (`terminal/create`, etc.) -- allows Zed to host
-      terminal sessions
+- [ ] `session/request_permission` (follow claude-agent-acp `canUseTool()` pattern)
+- [ ] `agent_plan` updates (follow codex-acp `update_plan()` pattern)
+- [ ] `readTextFile` / `writeTextFile` delegation (follow claude-agent-acp delegate pattern)
+- [ ] ACP terminal delegation
+- [ ] Model alias resolution (port claude-agent-acp `resolveModelPreference()`)
 
 ---
 
 ## Priority order
 
-1. **Phase A** -- fix tool output rendering (unblocks basic usability)
-2. **Phase B** -- terminal content lifecycle (proper Zed integration)
-3. **Phase C** -- tool call metadata (UI polish)
-4. **Phase D** -- streaming bash formatting (live output quality)
-5. **Phase E** -- read tool escaping (correctness)
-6. **Phase F** -- client capabilities (feature detection)
-7. **Phase G** -- test coverage (quality)
-8. **Phase H** -- MCP wiring (compliance)
-9. **Phase I** -- optional features (completeness)
+1. **Phase 1** -- fix tool output rendering (unblocks basic usability)
+2. **Phase 2** -- terminal content lifecycle (proper Zed integration)
+3. **Phase 3** -- tool call metadata and kind/title gaps (UI polish)
+4. **Phase 4** -- client capabilities detection (feature gating)
+5. **Phase 5** -- streaming bash formatting (live output quality)
+6. **Phase 6** -- test coverage (quality)
+7. **Phase 7** -- MCP wiring (compliance, blocked)
+8. **Phase 8** -- optional features (completeness, deferred)
