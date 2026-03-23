@@ -123,6 +123,10 @@ export class FakeAgentSession {
 		};
 	}
 
+	getContextUsage() {
+		return { tokens: 1000, contextWindow: 200000, percent: 0.5 };
+	}
+
 	async compact(_customInstructions?: string) {
 		return { summary: "compacted", tokensBefore: 100, firstKeptEntryId: "" };
 	}

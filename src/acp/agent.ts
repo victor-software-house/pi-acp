@@ -8,6 +8,10 @@ import {
 	type AuthenticateRequest,
 	type AvailableCommand,
 	type CancelNotification,
+	type CloseSessionRequest,
+	type CloseSessionResponse,
+	type ForkSessionRequest,
+	type ForkSessionResponse,
 	type InitializeRequest,
 	type InitializeResponse,
 	type ListSessionsRequest,
@@ -19,6 +23,8 @@ import {
 	type PromptRequest,
 	type PromptResponse,
 	RequestError,
+	type ResumeSessionRequest,
+	type ResumeSessionResponse,
 	type SessionConfigOption,
 	type SessionInfo,
 	type SessionModelState,
@@ -41,9 +47,18 @@ import {
 	SessionManager as PiSessionManager,
 } from "@mariozechner/pi-coding-agent";
 import { buildAuthMethods } from "@pi-acp/acp/auth";
+import { detectAuthError } from "@pi-acp/acp/auth-required";
 import { quietStartupEnabled, skillCommandsEnabled } from "@pi-acp/acp/pi-settings";
-import { PiAcpSession, SessionManager } from "@pi-acp/acp/session";
-import { extractAssistantText, extractUserMessageText } from "@pi-acp/acp/translate/pi-messages";
+import {
+	buildToolTitle,
+	PiAcpSession,
+	resolveToolPath,
+	SessionManager,
+	type ToolArgs,
+	toToolArgs,
+	toToolKind,
+} from "@pi-acp/acp/session";
+import { extractUserMessageText } from "@pi-acp/acp/translate/pi-messages";
 import { toolResultToText } from "@pi-acp/acp/translate/pi-tools";
 import { acpPromptToPiMessage } from "@pi-acp/acp/translate/prompt";
 import { hasPiAuthConfigured } from "@pi-acp/pi-auth/status";
@@ -115,6 +130,16 @@ function parseArgs(input: string): string[] {
 	return args;
 }
 
+const SESSION_TITLE_MAX = 100;
+
+function truncateSessionTitle(text: string): string | null {
+	const trimmed = text.trim();
+	if (trimmed === "") return null;
+	const oneLine = trimmed.replace(/\n/g, " ");
+	if (oneLine.length <= SESSION_TITLE_MAX) return oneLine;
+	return `${oneLine.slice(0, SESSION_TITLE_MAX - 1)}…`;
+}
+
 const pkg = readNearestPackageJson(import.meta.url);
 
 export class PiAcpAgent implements ACPAgent {
@@ -152,10 +177,13 @@ export class PiAcpAgent implements ACPAgent {
 				promptCapabilities: {
 					image: true,
 					audio: false,
-					embeddedContext: false,
+					embeddedContext: true,
 				},
 				sessionCapabilities: {
 					list: {},
+					close: {},
+					resume: {},
+					fork: {},
 				},
 			},
 		};
@@ -177,6 +205,8 @@ export class PiAcpAgent implements ACPAgent {
 		try {
 			result = await createAgentSession({ cwd: params.cwd });
 		} catch (e: unknown) {
+			const authErr = detectAuthError(e);
+			if (authErr !== null) throw authErr;
 			const msg = e instanceof Error ? e.message : String(e);
 			throw RequestError.internalError({}, `Failed to create pi session: ${msg}`);
 		}
@@ -219,8 +249,6 @@ export class PiAcpAgent implements ACPAgent {
 
 		if (preludeText) session.setStartupInfo(preludeText);
 
-		this.sessions.closeAllExcept(session.sessionId);
-
 		const modes = buildThinkingModes(piSession);
 		const models = buildModelState(piSession);
 		const configOptions = buildConfigOptions(modes, models);
@@ -257,7 +285,7 @@ export class PiAcpAgent implements ACPAgent {
 	}
 
 	async authenticate(_params: AuthenticateRequest) {
-		return;
+		return {};
 	}
 
 	async prompt(params: PromptRequest): Promise<PromptResponse> {
@@ -278,8 +306,20 @@ export class PiAcpAgent implements ACPAgent {
 		const result = await session.prompt(message, images);
 
 		const stopReason: StopReason = result === "error" ? "end_turn" : result;
+		const usage = session.getUsage();
+		const cost = session.getCost();
 
-		return { stopReason };
+		return {
+			stopReason,
+			usage: {
+				inputTokens: usage.inputTokens,
+				outputTokens: usage.outputTokens,
+				cachedReadTokens: usage.cachedReadTokens,
+				cachedWriteTokens: usage.cachedWriteTokens,
+				totalTokens: usage.inputTokens + usage.outputTokens,
+			},
+			_meta: cost > 0 ? { cost: { amount: cost, currency: "USD" } } : {},
+		};
 	}
 
 	async cancel(params: CancelNotification): Promise<void> {
@@ -304,6 +344,119 @@ export class PiAcpAgent implements ACPAgent {
 		return this.sessionPaths.get(sessionId) ?? null;
 	}
 
+	/**
+	 * Replay persisted session messages as ACP session updates.
+	 *
+	 * Iterates through the message history, emitting structured updates for each
+	 * content block type: text, thinking, tool calls, and tool results. A map of
+	 * tool call IDs to their invocation data (from assistant messages) is built
+	 * to enrich subsequent tool result updates with rawInput and locations.
+	 */
+	private async replaySessionHistory(
+		session: PiAcpSession,
+		messages: AgentMessage[],
+	): Promise<void> {
+		const toolCallMap = new Map<string, { name: string; args: ToolArgs }>();
+
+		for (const m of messages) {
+			if (!("role" in m)) continue;
+
+			if (m.role === "user") {
+				const text = extractUserMessageText((m satisfies UserMessage).content);
+				if (text) {
+					await this.conn.sessionUpdate({
+						sessionId: session.sessionId,
+						update: { sessionUpdate: "user_message_chunk", content: { type: "text", text } },
+					});
+				}
+				continue;
+			}
+
+			if (m.role === "assistant") {
+				const am = m satisfies AssistantMessage;
+				for (const block of am.content) {
+					if (block.type === "text" && block.text) {
+						await this.conn.sessionUpdate({
+							sessionId: session.sessionId,
+							update: {
+								sessionUpdate: "agent_message_chunk",
+								content: { type: "text", text: block.text },
+							},
+						});
+					} else if (block.type === "thinking" && block.thinking) {
+						await this.conn.sessionUpdate({
+							sessionId: session.sessionId,
+							update: {
+								sessionUpdate: "agent_thought_chunk",
+								content: { type: "text", text: block.thinking },
+							},
+						});
+					} else if (block.type === "toolCall") {
+						const args = toToolArgs(block.arguments);
+						toolCallMap.set(block.id, { name: block.name, args });
+						const locations = resolveToolPath(args, session.cwd);
+
+						await this.conn.sessionUpdate({
+							sessionId: session.sessionId,
+							update: {
+								sessionUpdate: "tool_call",
+								toolCallId: block.id,
+								title: buildToolTitle(block.name, args),
+								kind: toToolKind(block.name),
+								status: "completed",
+								rawInput: args,
+								...(locations ? { locations } : {}),
+							},
+						});
+					}
+				}
+				continue;
+			}
+
+			if (m.role === "toolResult") {
+				const tr = m satisfies ToolResultMessage;
+				const toolName = tr.toolName;
+				const toolCallId = tr.toolCallId;
+				const isError = tr.isError;
+
+				// Enrich from the preceding assistant tool call if available.
+				const invocation = toolCallMap.get(toolCallId);
+				const args = invocation?.args;
+				const locations = args !== undefined ? resolveToolPath(args, session.cwd) : undefined;
+
+				// If no tool_call was emitted from the assistant message (e.g. older
+				// session format without structured assistant content), emit one now.
+				if (invocation === undefined) {
+					await this.conn.sessionUpdate({
+						sessionId: session.sessionId,
+						update: {
+							sessionUpdate: "tool_call",
+							toolCallId,
+							title: buildToolTitle(toolName, {}),
+							kind: toToolKind(toolName),
+							status: "completed",
+							rawInput: null,
+							rawOutput: m,
+						},
+					});
+				}
+
+				const text = toolResultToText(m);
+				await this.conn.sessionUpdate({
+					sessionId: session.sessionId,
+					update: {
+						sessionUpdate: "tool_call_update",
+						toolCallId,
+						status: isError ? "failed" : "completed",
+						content: text ? [{ type: "content", content: { type: "text", text } }] : null,
+						rawOutput: m,
+						...(locations ? { locations } : {}),
+					},
+				});
+			}
+		}
+	}
+
 	async listSessions(params: ListSessionsRequest): Promise<ListSessionsResponse> {
 		const cwd = params.cwd;
 
@@ -319,7 +472,8 @@ export class PiAcpAgent implements ACPAgent {
 		const sessions = raw.map((s) => ({
 			id: s.id,
 			cwd: s.cwd,
-			name: s.name ?? "",
+			name: s.name,
+			firstMessage: s.firstMessage,
 			modified: s.modified,
 			messageCount: s.messageCount,
 		}));
@@ -342,7 +496,10 @@ export class PiAcpAgent implements ACPAgent {
 		const acpSessions: SessionInfo[] = page.map((s) => ({
 			sessionId: s.id,
 			cwd: s.cwd,
-			title: s.name ?? null,
+			title:
+				(s.name !== undefined && s.name !== "" ? s.name : null) ??
+				truncateSessionTitle(s.firstMessage) ??
+				null,
 			updatedAt: s.modified.toISOString(),
 		}));
 
@@ -371,6 +528,8 @@ export class PiAcpAgent implements ACPAgent {
 				sessionManager: sm,
 			});
 		} catch (e: unknown) {
+			const authErr = detectAuthError(e);
+			if (authErr !== null) throw authErr;
 			const msg = e instanceof Error ? e.message : String(e);
 			throw RequestError.internalError({}, `Failed to load pi session: ${msg}`);
 		}
@@ -386,69 +545,8 @@ export class PiAcpAgent implements ACPAgent {
 		});
 
 		this.sessions.register(session);
-		this.sessions.closeAllExcept(session.sessionId);
 
-		const messages: AgentMessage[] = piSession.messages;
-		for (const m of messages) {
-			if (!("role" in m)) continue;
-
-			if (m.role === "user") {
-				const text = extractUserMessageText((m satisfies UserMessage).content);
-				if (text) {
-					await this.conn.sessionUpdate({
-						sessionId: session.sessionId,
-						update: { sessionUpdate: "user_message_chunk", content: { type: "text", text } },
-					});
-				}
-			}
-
-			if (m.role === "assistant") {
-				const text = extractAssistantText((m satisfies AssistantMessage).content);
-				if (text) {
-					await this.conn.sessionUpdate({
-						sessionId: session.sessionId,
-						update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
-					});
-				}
-			}
-
-			if (m.role === "toolResult") {
-				const tr = m satisfies ToolResultMessage;
-				const toolName = tr.toolName;
-				const toolCallId = tr.toolCallId;
-				const isError = tr.isError;
-
-				await this.conn.sessionUpdate({
-					sessionId: session.sessionId,
-					update: {
-						sessionUpdate: "tool_call",
-						toolCallId,
-						title: toolName,
-						kind:
-							toolName === "read"
-								? "read"
-								: toolName === "write" || toolName === "edit"
-									? "edit"
-									: "other",
-						status: "completed",
-						rawInput: null,
-						rawOutput: m,
-					},
-				});
-
-				const text = toolResultToText(m);
-				await this.conn.sessionUpdate({
-					sessionId: session.sessionId,
-					update: {
-						sessionUpdate: "tool_call_update",
-						toolCallId,
-						status: isError ? "failed" : "completed",
-						content: text ? [{ type: "content", content: { type: "text", text } }] : null,
-						rawOutput: m,
-					},
-				});
-			}
-		}
+		await this.replaySessionHistory(session, piSession.messages);
 
 		const modes = buildThinkingModes(piSession);
 		const models = buildModelState(piSession);
@@ -475,6 +573,158 @@ export class PiAcpAgent implements ACPAgent {
 			modes,
 			models,
 			_meta: { piAcp: { startupInfo: null } },
+		};
+	}
+
+	async unstable_closeSession(params: CloseSessionRequest): Promise<CloseSessionResponse> {
+		const session = this.sessions.maybeGet(params.sessionId);
+		if (session === undefined) {
+			throw RequestError.invalidParams(`Unknown sessionId: ${params.sessionId}`);
+		}
+		this.sessions.close(params.sessionId);
+		return {};
+	}
+
+	async unstable_resumeSession(params: ResumeSessionRequest): Promise<ResumeSessionResponse> {
+		if (!isAbsolute(params.cwd)) {
+			throw RequestError.invalidParams(`cwd must be an absolute path: ${params.cwd}`);
+		}
+
+		// If the session is already live, reuse it.
+		const existing = this.sessions.maybeGet(params.sessionId);
+		if (existing !== undefined) {
+			const modes = buildThinkingModes(existing.piSession);
+			const models = buildModelState(existing.piSession);
+			return {
+				configOptions: buildConfigOptions(modes, models),
+				modes,
+				models,
+			};
+		}
+
+		// Otherwise, load from disk (same path as loadSession but without replay).
+		const sessionFile = await this.resolveSessionFile(params.sessionId);
+		if (sessionFile === null) {
+			throw RequestError.invalidParams(`Unknown sessionId: ${params.sessionId}`);
+		}
+
+		let result: CreateAgentSessionResult;
+		try {
+			const sm = PiSessionManager.open(sessionFile);
+			result = await createAgentSession({
+				cwd: params.cwd,
+				sessionManager: sm,
+			});
+		} catch (e: unknown) {
+			const authErr = detectAuthError(e);
+			if (authErr !== null) throw authErr;
+			const msg = e instanceof Error ? e.message : String(e);
+			throw RequestError.internalError({}, `Failed to resume pi session: ${msg}`);
+		}
+
+		const piSession = result.session;
+
+		const session = new PiAcpSession({
+			sessionId: params.sessionId,
+			cwd: params.cwd,
+			mcpServers: params.mcpServers ?? [],
+			piSession,
+			conn: this.conn,
+		});
+
+		this.sessions.register(session);
+		this.sessionPaths.set(params.sessionId, sessionFile);
+
+		const enableSkillCommands = skillCommandsEnabled(params.cwd);
+		setTimeout(() => {
+			void (async () => {
+				try {
+					const commands = buildCommandList(piSession, enableSkillCommands);
+					await this.conn.sessionUpdate({
+						sessionId: session.sessionId,
+						update: {
+							sessionUpdate: "available_commands_update",
+							availableCommands: mergeCommands(commands, builtinAvailableCommands()),
+						},
+					});
+				} catch {}
+			})();
+		}, 0);
+
+		const modes = buildThinkingModes(piSession);
+		const models = buildModelState(piSession);
+		return {
+			configOptions: buildConfigOptions(modes, models),
+			modes,
+			models,
+		};
+	}
+
+	async unstable_forkSession(params: ForkSessionRequest): Promise<ForkSessionResponse> {
+		if (!isAbsolute(params.cwd)) {
+			throw RequestError.invalidParams(`cwd must be an absolute path: ${params.cwd}`);
+		}
+
+		const sourceFile = await this.resolveSessionFile(params.sessionId);
+		if (sourceFile === null) {
+			throw RequestError.invalidParams(`Unknown sessionId: ${params.sessionId}`);
+		}
+
+		let result: CreateAgentSessionResult;
+		try {
+			const sm = PiSessionManager.forkFrom(sourceFile, params.cwd);
+			result = await createAgentSession({
+				cwd: params.cwd,
+				sessionManager: sm,
+			});
+		} catch (e: unknown) {
+			const authErr = detectAuthError(e);
+			if (authErr !== null) throw authErr;
+			const msg = e instanceof Error ? e.message : String(e);
+			throw RequestError.internalError({}, `Failed to fork pi session: ${msg}`);
+		}
+
+		const piSession = result.session;
+
+		const newSessionId = piSession.sessionManager.getSessionId();
+		const newSessionFile = piSession.sessionManager.getSessionFile();
+		if (newSessionFile !== undefined) {
+			this.sessionPaths.set(newSessionId, newSessionFile);
+		}
+
+		const session = new PiAcpSession({
+			sessionId: newSessionId,
+			cwd: params.cwd,
+			mcpServers: params.mcpServers ?? [],
+			piSession,
+			conn: this.conn,
+		});
+
+		this.sessions.register(session);
+
+		const enableSkillCommands = skillCommandsEnabled(params.cwd);
+		setTimeout(() => {
+			void (async () => {
+				try {
+					const commands = buildCommandList(piSession, enableSkillCommands);
+					await this.conn.sessionUpdate({
+						sessionId: session.sessionId,
+						update: {
+							sessionUpdate: "available_commands_update",
+							availableCommands: mergeCommands(commands, builtinAvailableCommands()),
+						},
+					});
+				} catch {}
+			})();
+		}, 0);
+
+		const modes = buildThinkingModes(piSession);
+		const models = buildModelState(piSession);
+		return {
+			sessionId: newSessionId,
+			configOptions: buildConfigOptions(modes, models),
+			modes,
+			models,
 		};
 	}
 
@@ -979,10 +1229,16 @@ function buildCommandList(
 	return commands;
 }
 
+let cachedUpdateNotice: string | null | undefined;
+
 function buildUpdateNotice(): string | null {
+	if (cachedUpdateNotice !== undefined) return cachedUpdateNotice;
 	try {
 		const installed = PI_VERSION;
-		if (!installed || !isSemver(installed)) return null;
+		if (!installed || !isSemver(installed)) {
+			cachedUpdateNotice = null;
+			return null;
+		}
 
 		const latestRes = spawnSync("npm", ["view", "@mariozechner/pi-coding-agent", "version"], {
 			encoding: "utf-8",
@@ -991,11 +1247,19 @@ function buildUpdateNotice(): string | null {
 		const latest = String(latestRes.stdout ?? "")
 			.trim()
 			.replace(/^v/i, "");
-		if (!latest || !isSemver(latest)) return null;
-		if (compareSemver(latest, installed) <= 0) return null;
+		if (!latest || !isSemver(latest)) {
+			cachedUpdateNotice = null;
+			return null;
+		}
+		if (compareSemver(latest, installed) <= 0) {
+			cachedUpdateNotice = null;
+			return null;
+		}
 
-		return `New version available: v${latest} (installed v${installed}). Run: \`npm i -g @mariozechner/pi-coding-agent\``;
+		cachedUpdateNotice = `New version available: v${latest} (installed v${installed}). Run: \`npm i -g @mariozechner/pi-coding-agent\``;
+		return cachedUpdateNotice;
 	} catch {
+		cachedUpdateNotice = null;
 		return null;
 	}
 }

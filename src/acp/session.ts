@@ -35,13 +35,13 @@ function findUniqueLineNumber(text: string, needle: string): number | undefined 
 	return line;
 }
 
-interface ToolArgs {
+export interface ToolArgs {
 	path?: string | undefined;
 	oldText?: string | undefined;
 	[key: string]: unknown;
 }
 
-function resolveToolPath(
+export function resolveToolPath(
 	args: ToolArgs,
 	cwd: string,
 	line?: number,
@@ -53,7 +53,7 @@ function resolveToolPath(
 	return [{ path: resolved, ...(typeof line === "number" ? { line } : {}) }];
 }
 
-function toToolKind(toolName: string): ToolKind {
+export function toToolKind(toolName: string): ToolKind {
 	switch (toolName) {
 		case "read":
 			return "read";
@@ -64,6 +64,43 @@ function toToolKind(toolName: string): ToolKind {
 			return "execute";
 		default:
 			return "other";
+	}
+}
+
+const MAX_TITLE_LEN = 80;
+
+function truncateTitle(text: string): string {
+	const oneLine = text.replace(/\n/g, " ").trim();
+	if (oneLine.length <= MAX_TITLE_LEN) return oneLine;
+	return `${oneLine.slice(0, MAX_TITLE_LEN - 1)}…`;
+}
+
+/**
+ * Build a descriptive tool title from tool name and args.
+ *
+ * Returns a short human-readable label like "Read src/index.ts" or "Run ls -la".
+ */
+export function buildToolTitle(toolName: string, args: ToolArgs): string {
+	const p = args.path;
+
+	switch (toolName) {
+		case "read":
+			return p !== undefined ? `Read ${p}` : "Read";
+		case "write":
+			return p !== undefined ? `Write ${p}` : "Write";
+		case "edit":
+			return p !== undefined ? `Edit ${p}` : "Edit";
+		case "bash": {
+			const command =
+				typeof args["command"] === "string"
+					? args["command"]
+					: typeof args["cmd"] === "string"
+						? args["cmd"]
+						: undefined;
+			return command !== undefined ? truncateTitle(`Run ${command}`) : "bash";
+		}
+		default:
+			return toolName;
 	}
 }
 
@@ -108,7 +145,7 @@ const toolArgsSchema = z
 	})
 	.loose();
 
-function toToolArgs(raw: unknown): ToolArgs {
+export function toToolArgs(raw: unknown): ToolArgs {
 	const result = toolArgsSchema.safeParse(raw);
 	return result.success ? result.data : {};
 }
@@ -324,7 +361,7 @@ export class PiAcpSession {
 				this.emit({
 					sessionUpdate: "tool_call",
 					toolCallId: toolCall.id,
-					title: toolCall.name,
+					title: buildToolTitle(toolCall.name, rawInput),
 					kind: toToolKind(toolCall.name),
 					status,
 					...(locations ? { locations } : {}),
@@ -351,12 +388,19 @@ export class PiAcpSession {
 	private handleToolStart(toolCallId: string, toolName: string, args: ToolArgs): void {
 		let line: number | undefined;
 
-		if (toolName === "edit" && args.path !== undefined) {
+		if ((toolName === "edit" || toolName === "write") && args.path !== undefined) {
 			try {
 				const abs = isAbsolute(args.path) ? args.path : resolvePath(this.cwd, args.path);
-				const oldText = readFileSync(abs, "utf8");
+				let oldText = "";
+				try {
+					oldText = readFileSync(abs, "utf8");
+				} catch {
+					// File may not exist yet for write -- treat as empty.
+				}
 				this.editSnapshots.set(toolCallId, { path: abs, oldText });
-				line = findUniqueLineNumber(oldText, args.oldText ?? "");
+				if (toolName === "edit") {
+					line = findUniqueLineNumber(oldText, args.oldText ?? "");
+				}
 			} catch {
 				// snapshot failure is non-fatal
 			}
@@ -369,7 +413,7 @@ export class PiAcpSession {
 			this.emit({
 				sessionUpdate: "tool_call",
 				toolCallId,
-				title: toolName,
+				title: buildToolTitle(toolName, args),
 				kind: toToolKind(toolName),
 				status: "in_progress",
 				...(locations ? { locations } : {}),
@@ -380,6 +424,7 @@ export class PiAcpSession {
 			this.emit({
 				sessionUpdate: "tool_call_update",
 				toolCallId,
+				title: buildToolTitle(toolName, args),
 				status: "in_progress",
 				...(locations ? { locations } : {}),
 				rawInput: args,
@@ -438,6 +483,7 @@ export class PiAcpSession {
 	}
 
 	private handleAgentEnd(): void {
+		this.emitUsageUpdate();
 		void this.flushEmits().finally(() => {
 			const reason: StopReason = this.cancelRequested
 				? "cancelled"
@@ -446,6 +492,49 @@ export class PiAcpSession {
 			this.pendingTurn?.resolve(reason);
 			this.pendingTurn = null;
 		});
+	}
+
+	/**
+	 * Emit a usage_update notification with current context and cost data.
+	 */
+	private emitUsageUpdate(): void {
+		const contextUsage = this.piSession.getContextUsage?.();
+		const stats = this.piSession.getSessionStats();
+
+		const used = contextUsage?.tokens ?? 0;
+		const size = contextUsage?.contextWindow ?? 0;
+
+		this.emit({
+			sessionUpdate: "usage_update",
+			used,
+			size,
+			cost: stats.cost > 0 ? { amount: stats.cost, currency: "USD" } : null,
+		});
+	}
+
+	/**
+	 * Build ACP Usage data from pi session stats for prompt response.
+	 */
+	getUsage(): {
+		inputTokens: number;
+		outputTokens: number;
+		cachedReadTokens: number;
+		cachedWriteTokens: number;
+	} {
+		const stats = this.piSession.getSessionStats();
+		return {
+			inputTokens: stats.tokens.input,
+			outputTokens: stats.tokens.output,
+			cachedReadTokens: stats.tokens.cacheRead,
+			cachedWriteTokens: stats.tokens.cacheWrite,
+		};
+	}
+
+	/**
+	 * Get cumulative session cost.
+	 */
+	getCost(): number {
+		return this.piSession.getSessionStats().cost;
 	}
 }
 

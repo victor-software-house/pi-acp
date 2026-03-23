@@ -9,46 +9,49 @@ Legend:
 
 ## Phase 1: Correct session lifecycle
 
-- [ ] Remove single-live-session eviction (`closeAllExcept(...)`) from normal new/load flows
-- [ ] Support multiple active `PiAcpSession` instances concurrently
-- [ ] Add `unstable_closeSession`
-- [ ] Add `unstable_resumeSession`
-- [ ] Add `unstable_forkSession`
-- [ ] Keep session ID to file-path resolution correct across new/load/resume/fork/close
-- [ ] Add tests for multiple concurrent sessions
-- [ ] Add tests for close/resume/fork behavior
+- [x] Remove single-live-session eviction (`closeAllExcept(...)`) from normal new/load flows
+- [x] Support multiple active `PiAcpSession` instances concurrently
+- [x] Add `unstable_closeSession`
+- [x] Add `unstable_resumeSession`
+- [x] Add `unstable_forkSession`
+- [x] Keep session ID to file-path resolution correct across new/load/resume/fork/close
+- [x] Add tests for multiple concurrent sessions
+- [x] Add tests for close/resume/fork behavior
 
 ## Phase 2: High-fidelity replay and live output
 
-- [ ] Refactor assistant replay to preserve structured content, not only flattened text
-- [ ] Replay assistant text blocks as `agent_message_chunk`
-- [ ] Replay assistant thinking blocks as `agent_thought_chunk`
-- [ ] Replay persisted tool calls as ACP tool calls instead of synthesizing generic completed calls
-- [ ] Preserve replayed tool `rawInput` where available
-- [ ] Preserve replayed tool `locations` where available
-- [ ] Improve live tool titles from tool args
-- [ ] Improve replayed tool titles from persisted data
-- [ ] Improve tool `kind` mapping and keep it stable across live/replay paths
-- [ ] Emit ACP-native diff content for `write` tool calls when args contain new file content
-- [ ] Tighten `edit` diff rendering so live and replay paths match more closely
-- [ ] Stop flattening structured tool results to plain text too early
-- [ ] Add tests for replay fidelity
-- [ ] Add tests for richer tool titles, kinds, locations, and diff content
+- [x] Refactor assistant replay to preserve structured content, not only flattened text
+- [x] Replay assistant text blocks as `agent_message_chunk`
+- [x] Replay assistant thinking blocks as `agent_thought_chunk`
+- [x] Replay persisted tool calls as ACP tool calls instead of synthesizing generic completed calls
+- [x] Preserve replayed tool `rawInput` where available
+- [x] Preserve replayed tool `locations` where available
+- [x] Improve live tool titles from tool args
+- [x] Improve replayed tool titles from persisted data
+- [x] Improve tool `kind` mapping and keep it stable across live/replay paths
+- [x] Emit ACP-native diff content for `write` tool calls when args contain new file content
+- [x] Tighten `edit` diff rendering so live and replay paths match more closely
+- [x] Stop flattening structured tool results to plain text too early
+- [x] Add tests for replay fidelity
+- [x] Add tests for richer tool titles, kinds, locations, and diff content
 
 ## Phase 3: Usage and capability parity
 
-- [ ] Emit `usage_update` notifications after completed assistant turns
-- [ ] Return `PromptResponse.usage`
-- [ ] Populate token fields from pi usage data
-- [ ] Populate cumulative cost from pi usage/session stats
-- [ ] Populate context size from the active pi model context window
-- [ ] Set `promptCapabilities.embeddedContext = true`
-- [ ] Tighten ACP resource and resource-link translation
-- [ ] Add tests for usage updates
-- [ ] Add tests for prompt usage response
-- [ ] Add tests for embedded resource handling
+- [x] Emit `usage_update` notifications after completed assistant turns
+- [x] Return `PromptResponse.usage`
+- [x] Populate token fields from pi usage data
+- [x] Populate cumulative cost from pi usage/session stats
+- [x] Populate context size from the active pi model context window
+- [x] Set `promptCapabilities.embeddedContext = true`
+- [x] Tighten ACP resource and resource-link translation
+- [x] Add tests for usage updates
+- [x] Add tests for prompt usage response
+- [x] Add tests for embedded resource handling
 
-## Phase 4: Terminal rendering improvement
+## Phase 4: Terminal rendering improvement (deferred)
+
+No ACP client currently consumes custom `_meta.terminal_*` extensions.
+Deferred until a client signals support or the ACP spec standardizes terminal content.
 
 - [ ] Detect client support for terminal output metadata
 - [ ] Emit ACP terminal content for bash tool calls when supported
@@ -60,39 +63,39 @@ Legend:
 
 ## Phase 5: Error and auth hardening
 
-- [ ] Wire in runtime auth error detection
-- [ ] Map runtime auth failures to ACP `authRequired`
-- [ ] Improve internal error mapping for session creation
-- [ ] Improve internal error mapping for session loading
-- [ ] Improve internal error mapping for prompt execution
-- [ ] Standardize unknown-session handling across load/resume/close/prompt/cancel
-- [ ] Add tests for auth-required error mapping
-- [ ] Add tests for invalid-session handling
+- [x] Wire in runtime auth error detection
+- [x] Map runtime auth failures to ACP `authRequired`
+- [x] Improve internal error mapping for session creation
+- [x] Improve internal error mapping for session loading
+- [x] Improve internal error mapping for prompt execution
+- [x] Standardize unknown-session handling across load/resume/close/prompt/cancel
+- [x] Add tests for auth-required error mapping
+- [x] Add tests for invalid-session handling
 
 ## Phase 6: UX polish
 
-- [ ] Improve session list titles using session name or a message-derived fallback
-- [ ] Emit synchronized config updates for thinking-level changes
-- [ ] Return concrete empty response objects instead of `void` where appropriate
-- [ ] Review startup/update-notice behavior for avoidable overhead
-- [ ] Add tests for session title fallback behavior
-- [ ] Add tests for config update parity
+- [x] Improve session list titles using session name or a message-derived fallback
+- [x] Emit synchronized config updates for thinking-level changes
+- [x] Return concrete empty response objects instead of `void` where appropriate
+- [x] Review startup/update-notice behavior for avoidable overhead
+- [x] Add tests for session title fallback behavior
+- [x] Add tests for config update parity
 
 ## Phase 7: Tests and conformance documentation
 
-- [ ] Add protocol-surface tests for `initialize`
-- [ ] Add protocol-surface tests for `authenticate`
-- [ ] Add protocol-surface tests for `session/new`
-- [ ] Add protocol-surface tests for `session/load`
-- [ ] Add protocol-surface tests for `session/list`
-- [ ] Add protocol-surface tests for `session/prompt`
-- [ ] Add protocol-surface tests for `setSessionConfigOption`
-- [ ] Add protocol-surface tests for `setSessionMode`
-- [ ] Add protocol-surface tests for `unstable_setSessionModel`
-- [ ] Add tests for `available_commands_update`
-- [ ] Add tests for `config_option_update`
-- [ ] Add `docs/engineering/` conformance notes for ACP coverage and remaining limitations
-- [ ] Update README limitations after implementation work lands
+- [x] Add protocol-surface tests for `initialize`
+- [x] Add protocol-surface tests for `authenticate`
+- [x] Add protocol-surface tests for `session/new`
+- [x] Add protocol-surface tests for `session/load`
+- [x] Add protocol-surface tests for `session/list`
+- [ ] Add protocol-surface tests for `session/prompt` (requires DI or integration test)
+- [ ] Add protocol-surface tests for `setSessionConfigOption` (requires active session)
+- [ ] Add protocol-surface tests for `setSessionMode` (requires active session)
+- [ ] Add protocol-surface tests for `unstable_setSessionModel` (requires active session)
+- [ ] Add tests for `available_commands_update` (requires active session)
+- [ ] Add tests for `config_option_update` (requires active session)
+- [x] Add `docs/engineering/` conformance notes for ACP coverage and remaining limitations
+- [x] Update README limitations after implementation work lands
 
 ## Confirmed exclusions for this refactor
 

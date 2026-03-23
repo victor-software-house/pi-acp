@@ -13,8 +13,9 @@ Active development. ACP compliance is improving steadily. Development is centere
 - Streams assistant output as ACP `agent_message_chunk`
 - Streams thinking output as ACP `agent_thought_chunk`
 - Maps pi tool execution to ACP `tool_call` / `tool_call_update`
+  - Descriptive tool titles (`Read src/index.ts`, `Run ls -la`, `Edit config.ts`)
   - Tool call locations surfaced for follow-along features in clients like Zed
-  - For `edit`, emits ACP structured diffs (`oldText`/`newText`) with inferred line numbers
+  - For `edit` and `write`, emits ACP structured diffs (`oldText`/`newText`)
   - Tool kinds: `read`, `edit`, `execute` (bash), `other`
 - Session configuration via ACP `configOptions`
   - Model selector (category: `model`)
@@ -22,11 +23,16 @@ Active development. ACP compliance is improving steadily. Development is centere
   - Also advertises `modes` and `models` for backward compatibility
   - `session/set_config_option` for changing model or thinking level
   - `config_option_update` emitted when configuration changes
-- Session persistence and history
+- Session persistence and lifecycle
+  - Multiple concurrent sessions supported
   - pi manages sessions in `~/.pi/agent/sessions/...`
-  - `session/list` uses pi's `SessionManager` directly
-  - `session/load` replays full conversation history
+  - `session/list` with title fallback from first user message
+  - `session/load` replays structured history (text, thinking, tool calls)
+  - `unstable_closeSession`, `unstable_resumeSession`, `unstable_forkSession`
   - Sessions can be resumed in both `pi` CLI and ACP clients
+- Usage and cost tracking
+  - `usage_update` emitted after each agent turn with context size and cost
+  - `PromptResponse.usage` includes per-turn token counts
 - Slash commands
   - File-based prompt templates from `~/.pi/agent/prompts/` and `<cwd>/.pi/prompts/`
   - Extension commands from pi extensions
@@ -163,7 +169,7 @@ test/
 
 ### MUST-level gaps
 
-- **MCP servers** -- accepted in `session/new` and `session/load` params but not wired through to pi. ACP requires agents to connect to all provided MCP servers. This is the main compliance gap.
+- **MCP servers** -- accepted in `session/new` and `session/load` params but not wired through to pi. ACP requires agents to connect to all provided MCP servers. This is the main compliance gap (upstream pi SDK limitation).
 
 ### SHOULD-level gaps
 
@@ -171,8 +177,7 @@ test/
 
 ### Not implemented (MAY / client capabilities)
 
-- **`session_info_update`** -- partially implemented (emitted by `/name` command); not emitted automatically for other metadata changes.
-- **`agent_plan`** -- plan updates not emitted before tool execution.
+- **`agent_plan`** -- plan updates not emitted before tool execution. pi has no equivalent planning surface.
 - **ACP filesystem delegation** (`fs/read_text_file`, `fs/write_text_file`) -- pi reads/writes locally. Not advertised.
 - **ACP terminal delegation** (`terminal/*`) -- pi executes commands locally. Not advertised.
 
@@ -180,8 +185,9 @@ test/
 
 - pi does not have real session modes (ask/architect/code). The `modes` field exposes thinking levels for backward compatibility with clients that do not support `configOptions`.
 - `configOptions` is the preferred configuration mechanism. Zed uses it exclusively when present.
+- pi-acp uses direct filesystem access rather than delegating reads/writes to the ACP client. This means pi reads on-disk file versions, not unsaved editor buffers.
 
-See [TODO.md](TODO.md) for full gap inventory and [ROADMAP.md](ROADMAP.md) for priorities.
+See [docs/engineering/acp-conformance.md](docs/engineering/acp-conformance.md) for detailed conformance status.
 
 ## Release
 
