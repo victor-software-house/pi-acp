@@ -15,7 +15,7 @@ import * as z from "zod";
 
 const textBlockSchema = z.object({
 	type: z.literal("text"),
-	text: z.string().trim(),
+	text: z.string(),
 });
 
 const imageBlockSchema = z.object({
@@ -25,9 +25,9 @@ const imageBlockSchema = z.object({
 const contentBlockSchema = z.union([textBlockSchema, imageBlockSchema]);
 
 const bashDetailsSchema = z.object({
-	stdout: z.string().trim().optional(),
-	stderr: z.string().trim().optional(),
-	output: z.string().trim().optional(),
+	stdout: z.string().optional(),
+	stderr: z.string().optional(),
+	output: z.string().optional(),
 	exitCode: z.number().optional(),
 	code: z.number().optional(),
 });
@@ -35,9 +35,9 @@ const bashDetailsSchema = z.object({
 const bashResultSchema = z.object({
 	content: z.array(z.unknown()).optional(),
 	details: bashDetailsSchema.optional(),
-	stdout: z.string().trim().optional(),
-	stderr: z.string().trim().optional(),
-	output: z.string().trim().optional(),
+	stdout: z.string().optional(),
+	stderr: z.string().optional(),
+	output: z.string().optional(),
 	exitCode: z.number().optional(),
 	code: z.number().optional(),
 });

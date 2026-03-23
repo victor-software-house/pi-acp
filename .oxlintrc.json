@@ -58,7 +58,7 @@
 	},
 	"overrides": [
 		{
-			"files": ["**/translate/pi-tools.ts"],
+			"files": ["**/translate/pi-tools.ts", "**/translate/tool-content.ts"],
 			"rules": {
 				"zod/prefer-string-schema-with-trim": "off"
 			}
