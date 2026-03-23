@@ -40,7 +40,7 @@ Both `modes` and `models` are also returned for backward compatibility.
 
 ## Coding guidelines
 
-- Toolchain: Bun (dev/test), tsup (npm build), Biome (format/lint), oxlint (type-aware lint + zod plugin)
+- Toolchain: Bun (dev/test), tsdown (npm build), Biome (format/lint), oxlint (type-aware lint + zod plugin)
 - Tabs, double quotes, semicolons, `import type` enforced, `node:` protocol
 - No `any`, no unsafe type assertions (`as Type`), no `@ts-ignore`
 - Zod for parsing untrusted/external data (JSON files, pi SDK `any` boundaries)

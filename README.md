@@ -129,7 +129,7 @@ Zed shows an Authenticate banner that launches this automatically.
 ```bash
 bun install
 bun run dev          # run from src
-bun run build        # tsup -> dist/index.js
+bun run build        # tsdown -> dist/index.mjs
 bun run typecheck    # tsc --noEmit
 bun run lint         # biome + oxlint
 bun test             # 26 tests
