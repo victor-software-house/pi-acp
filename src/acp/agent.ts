@@ -48,6 +48,10 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { buildAuthMethods } from "@pi-acp/acp/auth";
 import { detectAuthError } from "@pi-acp/acp/auth-required";
+import {
+	type ClientCapabilityFlags,
+	parseClientCapabilities,
+} from "@pi-acp/acp/client-capabilities";
 import { quietStartupEnabled, skillCommandsEnabled } from "@pi-acp/acp/pi-settings";
 import {
 	buildToolTitle,
@@ -59,8 +63,8 @@ import {
 	toToolKind,
 } from "@pi-acp/acp/session";
 import { extractUserMessageText } from "@pi-acp/acp/translate/pi-messages";
-import { toolResultToText } from "@pi-acp/acp/translate/pi-tools";
 import { acpPromptToPiMessage } from "@pi-acp/acp/translate/prompt";
+import { formatToolContent } from "@pi-acp/acp/translate/tool-content";
 import { hasPiAuthConfigured } from "@pi-acp/pi-auth/status";
 
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -147,6 +151,12 @@ export class PiAcpAgent implements ACPAgent {
 	private readonly sessions = new SessionManager();
 	/** Cache of sessionId → file path, populated by listSessions and newSession. */
 	private readonly sessionPaths = new Map<string, string>();
+	/** Parsed client capability flags from initialize(). */
+	private clientCapabilities: ClientCapabilityFlags = {
+		terminalOutput: false,
+		terminalAuth: false,
+		gatewayAuth: false,
+	};
 
 	dispose(): void {
 		this.sessions.disposeAll();
@@ -161,6 +171,8 @@ export class PiAcpAgent implements ACPAgent {
 		const supportedVersion = 1;
 		const requested = params.protocolVersion;
 
+		this.clientCapabilities = parseClientCapabilities(params.clientCapabilities);
+
 		return {
 			protocolVersion: requested === supportedVersion ? requested : supportedVersion,
 			agentInfo: {
@@ -169,7 +181,7 @@ export class PiAcpAgent implements ACPAgent {
 				version: pkg.version,
 			},
 			authMethods: buildAuthMethods({
-				supportsTerminalAuthMeta: params.clientCapabilities?._meta?.["terminal-auth"] === true,
+				supportsTerminalAuthMeta: this.clientCapabilities.terminalAuth,
 			}),
 			agentCapabilities: {
 				loadSession: true,
@@ -234,6 +246,7 @@ export class PiAcpAgent implements ACPAgent {
 			mcpServers: params.mcpServers,
 			piSession,
 			conn: this.conn,
+			supportsTerminalOutput: this.clientCapabilities.terminalOutput,
 		});
 
 		this.sessions.register(session);
@@ -406,6 +419,7 @@ export class PiAcpAgent implements ACPAgent {
 								status: "completed",
 								rawInput: args,
 								...(locations ? { locations } : {}),
+								_meta: { piAcp: { toolName: block.name } },
 							},
 						});
 					}
@@ -437,20 +451,22 @@ export class PiAcpAgent implements ACPAgent {
 							status: "completed",
 							rawInput: null,
 							rawOutput: m,
+							_meta: { piAcp: { toolName } },
 						},
 					});
 				}
 
-				const text = toolResultToText(m);
+				const content = formatToolContent(toolName, m, isError);
 				await this.conn.sessionUpdate({
 					sessionId: session.sessionId,
 					update: {
 						sessionUpdate: "tool_call_update",
 						toolCallId,
 						status: isError ? "failed" : "completed",
-						content: text ? [{ type: "content", content: { type: "text", text } }] : null,
+						content: content.length > 0 ? content : null,
 						rawOutput: m,
 						...(locations ? { locations } : {}),
+						_meta: { piAcp: { toolName } },
 					},
 				});
 			}
@@ -542,6 +558,7 @@ export class PiAcpAgent implements ACPAgent {
 			mcpServers: params.mcpServers,
 			piSession,
 			conn: this.conn,
+			supportsTerminalOutput: this.clientCapabilities.terminalOutput,
 		});
 
 		this.sessions.register(session);
@@ -630,6 +647,7 @@ export class PiAcpAgent implements ACPAgent {
 			mcpServers: params.mcpServers ?? [],
 			piSession,
 			conn: this.conn,
+			supportsTerminalOutput: this.clientCapabilities.terminalOutput,
 		});
 
 		this.sessions.register(session);
@@ -698,6 +716,7 @@ export class PiAcpAgent implements ACPAgent {
 			mcpServers: params.mcpServers ?? [],
 			piSession,
 			conn: this.conn,
+			supportsTerminalOutput: this.clientCapabilities.terminalOutput,
 		});
 
 		this.sessions.register(session);

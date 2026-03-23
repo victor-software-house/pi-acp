@@ -13,7 +13,7 @@ import {
 import type { AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
 import type { AssistantMessageEvent, ToolCall } from "@mariozechner/pi-ai";
 import type { AgentSession, AgentSessionEvent } from "@mariozechner/pi-coding-agent";
-import { toolResultToText } from "@pi-acp/acp/translate/pi-tools";
+import { formatToolContent, wrapStreamingBashOutput } from "@pi-acp/acp/translate/tool-content";
 import * as z from "zod";
 
 export type StopReason = "end_turn" | "cancelled" | "max_tokens" | "error";
@@ -61,7 +61,10 @@ export function toToolKind(toolName: string): ToolKind {
 		case "edit":
 			return "edit";
 		case "bash":
+		case "tmux":
 			return "execute";
+		case "lsp":
+			return "search";
 		default:
 			return "other";
 	}
@@ -73,6 +76,11 @@ function truncateTitle(text: string): string {
 	const oneLine = text.replace(/\n/g, " ").trim();
 	if (oneLine.length <= MAX_TITLE_LEN) return oneLine;
 	return `${oneLine.slice(0, MAX_TITLE_LEN - 1)}…`;
+}
+
+function capitalize(s: string): string {
+	if (s.length === 0) return s;
+	return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 /**
@@ -99,6 +107,41 @@ export function buildToolTitle(toolName: string, args: ToolArgs): string {
 						: undefined;
 			return command !== undefined ? truncateTitle(`Run ${command}`) : "bash";
 		}
+		case "lsp": {
+			const action = typeof args["action"] === "string" ? args["action"] : undefined;
+			const file = typeof args["file"] === "string" ? args["file"] : undefined;
+			const query = typeof args["query"] === "string" ? args["query"] : undefined;
+			const line = typeof args["line"] === "number" ? args["line"] : undefined;
+			if (action !== undefined) {
+				const target = file !== undefined ? (line !== undefined ? `${file}:${line}` : file) : query;
+				return target !== undefined
+					? truncateTitle(`${capitalize(action)} ${target}`)
+					: capitalize(action);
+			}
+			return "LSP";
+		}
+		case "tmux": {
+			const action = typeof args["action"] === "string" ? args["action"] : undefined;
+			const command = typeof args["command"] === "string" ? args["command"] : undefined;
+			const name = typeof args["name"] === "string" ? args["name"] : undefined;
+			if (action === "run" && command !== undefined) return truncateTitle(`Tmux: ${command}`);
+			if (action !== undefined && name !== undefined)
+				return truncateTitle(`Tmux ${action} ${name}`);
+			if (action !== undefined) return `Tmux ${action}`;
+			return "Tmux";
+		}
+		case "context_tag": {
+			const name = typeof args["name"] === "string" ? args["name"] : undefined;
+			return name !== undefined ? `Tag ${name}` : "Tag";
+		}
+		case "context_log":
+			return "Context log";
+		case "context_checkout": {
+			const target = typeof args["target"] === "string" ? args["target"] : undefined;
+			return target !== undefined ? truncateTitle(`Checkout ${target}`) : "Checkout";
+		}
+		case "claudemon":
+			return "Check quota";
 		default:
 			return toolName;
 	}
@@ -151,6 +194,30 @@ export function toToolArgs(raw: unknown): ToolArgs {
 }
 
 // ---------------------------------------------------------------------------
+// _meta builder helpers
+// ---------------------------------------------------------------------------
+
+type PiAcpMeta = Record<string, unknown>;
+
+/** Build the `_meta.piAcp` tool name metadata. */
+function buildToolMeta(toolName: string, extra?: PiAcpMeta): PiAcpMeta {
+	const base: PiAcpMeta = { piAcp: { toolName } };
+	if (extra !== undefined) {
+		return { ...base, ...extra };
+	}
+	return base;
+}
+
+// ---------------------------------------------------------------------------
+// Terminal tool classification
+// ---------------------------------------------------------------------------
+
+/** Tools that produce terminal-style output. */
+function isTerminalTool(toolName: string): boolean {
+	return toolName === "bash" || toolName === "tmux";
+}
+
+// ---------------------------------------------------------------------------
 // Session manager
 // ---------------------------------------------------------------------------
 
@@ -197,12 +264,14 @@ export class SessionManager {
 // ACP session wrapping a pi AgentSession
 // ---------------------------------------------------------------------------
 
-interface PiAcpSessionOpts {
+export interface PiAcpSessionOpts {
 	sessionId: string;
 	cwd: string;
 	mcpServers: McpServer[];
 	piSession: AgentSession;
 	conn: AgentSideConnection;
+	/** Whether the client supports terminal output metadata. */
+	supportsTerminalOutput?: boolean | undefined;
 }
 
 export class PiAcpSession {
@@ -210,6 +279,7 @@ export class PiAcpSession {
 	readonly cwd: string;
 	readonly mcpServers: McpServer[];
 	readonly piSession: AgentSession;
+	readonly supportsTerminalOutput: boolean;
 
 	private startupInfo: string | null = null;
 	private startupInfoSent = false;
@@ -220,6 +290,8 @@ export class PiAcpSession {
 		null;
 
 	private currentToolCalls = new Map<string, "pending" | "in_progress">();
+	/** Map of toolCallId -> toolName for streaming updates (Phase 5). */
+	private toolCallNames = new Map<string, string>();
 	private editSnapshots = new Map<string, { path: string; oldText: string }>();
 	private lastAssistantStopReason: string | null = null;
 	private lastEmit: Promise<void> = Promise.resolve();
@@ -231,6 +303,7 @@ export class PiAcpSession {
 		this.mcpServers = opts.mcpServers;
 		this.piSession = opts.piSession;
 		this.conn = opts.conn;
+		this.supportsTerminalOutput = opts.supportsTerminalOutput ?? false;
 		this.unsubscribe = this.piSession.subscribe((ev: AgentSessionEvent) => this.handlePiEvent(ev));
 	}
 
@@ -313,10 +386,10 @@ export class PiAcpSession {
 				this.handleToolStart(ev.toolCallId, ev.toolName, toToolArgs(ev.args));
 				break;
 			case "tool_execution_update":
-				this.handleToolUpdate(ev.toolCallId, ev.partialResult);
+				this.handleToolUpdate(ev.toolCallId, ev.toolName, ev.partialResult);
 				break;
 			case "tool_execution_end":
-				this.handleToolEnd(ev.toolCallId, ev.result, ev.isError);
+				this.handleToolEnd(ev.toolCallId, ev.toolName, ev.result, ev.isError);
 				break;
 			case "agent_end":
 				this.handleAgentEnd();
@@ -366,6 +439,7 @@ export class PiAcpSession {
 					status,
 					...(locations ? { locations } : {}),
 					rawInput,
+					_meta: buildToolMeta(toolCall.name),
 				});
 			} else {
 				this.emit({
@@ -374,6 +448,7 @@ export class PiAcpSession {
 					status,
 					...(locations ? { locations } : {}),
 					rawInput,
+					_meta: buildToolMeta(toolCall.name),
 				});
 			}
 		}
@@ -386,6 +461,9 @@ export class PiAcpSession {
 	}
 
 	private handleToolStart(toolCallId: string, toolName: string, args: ToolArgs): void {
+		// Track toolName for streaming updates (Phase 5)
+		this.toolCallNames.set(toolCallId, toolName);
+
 		let line: number | undefined;
 
 		if ((toolName === "edit" || toolName === "write") && args.path !== undefined) {
@@ -408,6 +486,19 @@ export class PiAcpSession {
 
 		const locations = resolveToolPath(args, this.cwd, line);
 
+		// Build terminal metadata for bash/tmux when client supports it
+		const terminalMeta =
+			this.supportsTerminalOutput && isTerminalTool(toolName)
+				? { terminal_info: { terminal_id: toolCallId, cwd: this.cwd } }
+				: undefined;
+		const meta = buildToolMeta(toolName, terminalMeta);
+
+		// Build content for terminal-aware clients
+		const terminalContent: ToolCallContent[] | undefined =
+			this.supportsTerminalOutput && isTerminalTool(toolName)
+				? [{ type: "terminal" as const, terminalId: toolCallId }]
+				: undefined;
+
 		if (!this.currentToolCalls.has(toolCallId)) {
 			this.currentToolCalls.set(toolCallId, "in_progress");
 			this.emit({
@@ -417,7 +508,9 @@ export class PiAcpSession {
 				kind: toToolKind(toolName),
 				status: "in_progress",
 				...(locations ? { locations } : {}),
+				...(terminalContent !== undefined ? { content: terminalContent } : {}),
 				rawInput: args,
+				_meta: meta,
 			});
 		} else {
 			this.currentToolCalls.set(toolCallId, "in_progress");
@@ -427,47 +520,111 @@ export class PiAcpSession {
 				title: buildToolTitle(toolName, args),
 				status: "in_progress",
 				...(locations ? { locations } : {}),
+				...(terminalContent !== undefined ? { content: terminalContent } : {}),
 				rawInput: args,
+				_meta: meta,
 			});
 		}
 	}
 
-	private handleToolUpdate(toolCallId: string, partialResult: unknown): void {
-		const text = toolResultToText(partialResult);
-		this.emit({
-			sessionUpdate: "tool_call_update",
-			toolCallId,
-			status: "in_progress",
-			content: text
-				? ([{ type: "content", content: { type: "text", text } }] satisfies ToolCallContent[])
-				: null,
-			rawOutput: partialResult,
-		});
+	private handleToolUpdate(toolCallId: string, toolName: string, partialResult: unknown): void {
+		// Look up tool name from our map (Phase 5), fall back to event's toolName
+		const name = this.toolCallNames.get(toolCallId) ?? toolName;
+
+		if (this.supportsTerminalOutput && isTerminalTool(name)) {
+			// Terminal-aware path: emit only _meta.terminal_output, no content
+			const text = extractStreamingText(partialResult);
+			this.emit({
+				sessionUpdate: "tool_call_update",
+				toolCallId,
+				status: "in_progress",
+				_meta: buildToolMeta(name, {
+					terminal_output: { terminal_id: toolCallId, data: text },
+				}),
+				rawOutput: partialResult,
+			});
+		} else if (isTerminalTool(name)) {
+			// Non-terminal fallback: wrap in console code fence
+			const text = extractStreamingText(partialResult);
+			const wrapped = wrapStreamingBashOutput(text);
+			this.emit({
+				sessionUpdate: "tool_call_update",
+				toolCallId,
+				status: "in_progress",
+				content: wrapped
+					? ([
+							{ type: "content", content: { type: "text", text: wrapped } },
+						] satisfies ToolCallContent[])
+					: null,
+				_meta: buildToolMeta(name),
+				rawOutput: partialResult,
+			});
+		} else {
+			// Other tools: plain text content
+			const text = extractStreamingText(partialResult);
+			this.emit({
+				sessionUpdate: "tool_call_update",
+				toolCallId,
+				status: "in_progress",
+				content: text
+					? ([{ type: "content", content: { type: "text", text } }] satisfies ToolCallContent[])
+					: null,
+				_meta: buildToolMeta(name),
+				rawOutput: partialResult,
+			});
+		}
 	}
 
-	private handleToolEnd(toolCallId: string, result: unknown, isError: boolean): void {
-		const text = toolResultToText(result);
+	private handleToolEnd(
+		toolCallId: string,
+		toolName: string,
+		result: unknown,
+		isError: boolean,
+	): void {
 		const snapshot = this.editSnapshots.get(toolCallId);
 		let content: ToolCallContent[] | null = null;
 
+		// Diff path for edit/write
 		if (!isError && snapshot) {
 			try {
 				const newText = readFileSync(snapshot.path, "utf8");
 				if (newText !== snapshot.oldText) {
+					const formatted = formatToolContent(toolName, result, isError);
 					content = [
 						{ type: "diff", path: snapshot.path, oldText: snapshot.oldText, newText },
-						...(text
-							? ([{ type: "content", content: { type: "text", text } }] satisfies ToolCallContent[])
-							: []),
+						...formatted,
 					];
 				}
 			} catch {
-				// fall back to text
+				// fall back to formatted content
 			}
 		}
 
-		if (!content && text) {
-			content = [{ type: "content", content: { type: "text", text } }] satisfies ToolCallContent[];
+		// Terminal exit metadata for bash/tmux
+		const terminalExitMeta =
+			this.supportsTerminalOutput && isTerminalTool(toolName)
+				? {
+						terminal_exit: {
+							terminal_id: toolCallId,
+							exit_code: extractExitCode(result),
+							signal: null,
+						},
+					}
+				: undefined;
+		const meta = buildToolMeta(toolName, terminalExitMeta);
+
+		// If no diff content, use formatted tool content
+		if (content === null) {
+			const formatted = formatToolContent(toolName, result, isError);
+			content = formatted.length > 0 ? formatted : null;
+		}
+
+		// Last resort: if formatToolContent returns empty and no diff, generate plain text
+		if (content === null && !isError && toolName !== "edit" && toolName !== "write") {
+			const text = extractStreamingText(result);
+			if (text) {
+				content = [{ type: "content", content: { type: "text", text } }];
+			}
 		}
 
 		this.emit({
@@ -475,11 +632,13 @@ export class PiAcpSession {
 			toolCallId,
 			status: isError ? "failed" : "completed",
 			content,
+			_meta: meta,
 			rawOutput: result,
 		});
 
 		this.currentToolCalls.delete(toolCallId);
 		this.editSnapshots.delete(toolCallId);
+		this.toolCallNames.delete(toolCallId);
 	}
 
 	private handleAgentEnd(): void {
@@ -536,6 +695,74 @@ export class PiAcpSession {
 	getCost(): number {
 		return this.piSession.getSessionStats().cost;
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Streaming text extraction (lightweight, no formatting)
+// ---------------------------------------------------------------------------
+
+function isTextBlock(v: unknown): v is { type: "text"; text: string } {
+	return (
+		typeof v === "object" &&
+		v !== null &&
+		"type" in v &&
+		v.type === "text" &&
+		"text" in v &&
+		typeof v.text === "string"
+	);
+}
+
+function extractStreamingText(result: unknown): string {
+	if (result === null || result === undefined) return "";
+	if (typeof result === "string") return result;
+	if (typeof result !== "object") return String(result);
+
+	// Content blocks
+	if ("content" in result && Array.isArray(result.content)) {
+		const texts: string[] = [];
+		for (const raw of result.content) {
+			if (isTextBlock(raw)) {
+				texts.push(raw.text);
+			}
+		}
+		if (texts.length > 0) return texts.join("");
+	}
+
+	// Details fields
+	if ("details" in result) {
+		const details = result.details;
+		if (typeof details === "object" && details !== null) {
+			if ("stdout" in details && typeof details.stdout === "string" && details.stdout.trim() !== "")
+				return details.stdout;
+			if ("output" in details && typeof details.output === "string" && details.output.trim() !== "")
+				return details.output;
+		}
+	}
+
+	// Top-level output/stdout
+	if ("output" in result && typeof result.output === "string" && result.output.trim() !== "")
+		return result.output;
+	if ("stdout" in result && typeof result.stdout === "string" && result.stdout.trim() !== "")
+		return result.stdout;
+
+	return "";
+}
+
+function extractExitCode(result: unknown): number | null {
+	if (result === null || result === undefined || typeof result !== "object") return null;
+
+	if ("details" in result) {
+		const details = result.details;
+		if (typeof details === "object" && details !== null) {
+			if ("exitCode" in details && typeof details.exitCode === "number") return details.exitCode;
+			if ("code" in details && typeof details.code === "number") return details.code;
+		}
+	}
+
+	if ("exitCode" in result && typeof result.exitCode === "number") return result.exitCode;
+	if ("code" in result && typeof result.code === "number") return result.code;
+
+	return null;
 }
 
 /**

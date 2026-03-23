@@ -34,8 +34,22 @@ export class FakeAgentSession {
 		for (const h of this.handlers) h(ev);
 	}
 
+	_model: { provider: string; id: string; name: string } = {
+		provider: "test",
+		id: "model",
+		name: "model",
+	};
+
 	async prompt(message: string, opts?: { images?: unknown[] }): Promise<void> {
 		this.prompts.push({ message, images: opts?.images ?? [] });
+	}
+
+	async setModel(model: { provider: string; id: string; name?: string }): Promise<void> {
+		this._model = {
+			provider: model.provider,
+			id: model.id,
+			name: model.name ?? model.id,
+		};
 	}
 
 	async abort(): Promise<void> {
@@ -84,7 +98,7 @@ export class FakeAgentSession {
 	}
 
 	get model() {
-		return { provider: "test", id: "model", name: "model" };
+		return this._model;
 	}
 
 	get modelRegistry() {
