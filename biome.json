@@ -1,5 +1,6 @@
 {
 	"$schema": "https://biomejs.dev/schemas/2.4.8/schema.json",
+	"root": true,
 	"assist": {
 		"actions": {
 			"source": {
@@ -17,7 +18,8 @@
 				"noConfusingVoidType": {
 					"level": "warn",
 					"fix": "none"
-				}
+				},
+				"noDeprecatedImports": "error"
 			},
 			"style": {
 				"useImportType": "error",
@@ -63,7 +65,8 @@
 				"noUselessTypeConstraint": "error"
 			},
 			"nursery": {
-				"noFloatingPromises": "error"
+				"noFloatingPromises": "error",
+				"noUnnecessaryConditions": "error"
 			}
 		}
 	},
