@@ -12,126 +12,168 @@ Legend:
 
 ---
 
-## Phase 1: Per-tool output formatting (critical)
+## Phase 1: Per-tool output formatting (v0.3.0) -- DONE
 
-Bash output is invisible/collapsed in Zed because pi-acp sends raw text
-without formatting. Both reference implementations dispatch formatting by
-tool name: `` ```console `` for bash, `markdownEscape()` for read, code
-fences for errors.
+- [x] Create `src/acp/translate/tool-content.ts` with `formatToolContent(toolName, result, isError)`
+- [x] Bash results: extract stdout/stderr, wrap in `` ```console\n{output}\n``` ``
+- [x] Bash results: append `exit code: N` on non-zero exit
+- [x] Bash errors: wrap in `` ```\n{error}\n``` `` with `status: "failed"`
+- [x] Tmux results: same formatting as bash (`` ```console ``)
+- [x] Read results: apply `markdownEscape()` to text blocks
+- [x] Read results: preserve image content blocks unchanged
+- [x] LSP results: wrap in `` ```\n{text}\n``` ``
+- [x] Error results (all tools): wrap error text in code fences
+- [x] Edit/write: return empty array (diff path handles these)
+- [x] Fallback: plain text content for unknown tools
+- [x] Add `markdownEscape()` (character-level escape)
+- [x] Add focused extractors: `extractBashOutput()`, `extractTextContent()`, `extractContentBlocks()`
+- [x] Update `handleToolEnd()` in `session.ts` to use `formatToolContent`
+- [x] Update `handleToolUpdate()` to accept `toolName` parameter
+- [x] Update `handleToolUpdate()` to wrap bash/tmux output in `` ```console ``
+- [x] Update `replaySessionHistory()` in `agent.ts` to use `formatToolContent`
+- [ ] Remove `toolResultToText()` from `pi-tools.ts` (kept for backward compat, no production callers)
+- [x] Add tests: bash output (normal, error, empty, non-zero exit)
+- [x] Add tests: read output (plain text, markdown-sensitive content, images)
+- [x] Add tests: error formatting across tool types
+- [x] Add tests: streaming bash formatting in `handleToolUpdate`
+- [x] Add tests: edit/write still get diff content (not affected by new formatter)
+- [x] Add tests: replay path produces formatted content
 
-- [ ] Create `src/acp/translate/tool-content.ts` with `formatToolContent(toolName, result, isError)`
-- [ ] Bash results: extract stdout/stderr, wrap in `` ```console\n{output}\n``` ``
-- [ ] Bash results: append `exit code: N` on non-zero exit
-- [ ] Bash errors: wrap in `` ```\n{error}\n``` `` with `status: "failed"`
-- [ ] Tmux results: same formatting as bash (`` ```console ``)
-- [ ] Read results: apply `markdownEscape()` to text blocks
-- [ ] Read results: preserve image content blocks unchanged
-- [ ] LSP results: wrap in `` ```\n{text}\n``` ``
-- [ ] Error results (all tools): wrap error text in code fences
-- [ ] Edit/write: return empty array (diff path handles these)
-- [ ] Fallback: plain text content for unknown tools
-- [ ] Add `markdownEscape()` (port from claude-agent-acp `tools.ts`)
-- [ ] Add focused extractors: `extractBashOutput()`, `extractTextContent()`, `extractContentBlocks()`
-- [ ] Update `handleToolEnd()` in `session.ts` to use `formatToolContent`
-- [ ] Update `handleToolUpdate()` to accept `toolName` parameter
-- [ ] Update `handleToolUpdate()` to wrap bash/tmux output in `` ```console ``
-- [ ] Update `replaySessionHistory()` in `agent.ts` to use `formatToolContent`
-- [ ] Remove `toolResultToText()` from `pi-tools.ts`
-- [ ] Add tests: bash output (normal, error, empty, non-zero exit)
-- [ ] Add tests: read output (plain text, markdown-sensitive content, images)
-- [ ] Add tests: error formatting across tool types
-- [ ] Add tests: streaming bash formatting in `handleToolUpdate`
-- [ ] Add tests: edit/write still get diff content (not affected by new formatter)
-- [ ] Add tests: replay path produces formatted content
+## Phase 2: Terminal content lifecycle (v0.3.0) -- DONE
 
-## Phase 2: Terminal content lifecycle
+- [x] Store `clientCapabilities` from `initialize` on `PiAcpAgent`
+- [x] Detect `clientCapabilities._meta.terminal_output === true`
+- [x] Add `supportsTerminalOutput` flag to `PiAcpSessionOpts`
+- [x] When terminal IS supported (bash/tmux):
+  - [x] `handleToolStart`: emit `content: [{ type: "terminal", terminalId }]` + `_meta.terminal_info { terminal_id, cwd }`
+  - [x] `handleToolUpdate`: emit `_meta.terminal_output { terminal_id, data }` (no content, meta only)
+  - [x] `handleToolEnd`: emit `_meta.terminal_exit { terminal_id, exit_code, signal: null }` alongside status
+- [x] When terminal NOT supported: use Phase 1 `` ```console `` fallback
+- [x] Add tests: terminal lifecycle sequence (info -> output -> exit)
+- [x] Add tests: cwd included in terminal_info
+- [x] Add tests: no content field when terminal_output meta is present
+- [x] Add tests: fallback to code fences without terminal support
 
-Both reference implementations emit a 3-phase terminal lifecycle when the
-client supports it. codex-acp includes `cwd` in `terminal_info`. Both fall
-back to code fences when terminal is not supported.
+## Phase 3: Tool call `_meta` and kind/title gaps (v0.3.0) -- DONE
 
-- [ ] Store `clientCapabilities` from `initialize` on `PiAcpAgent`
-- [ ] Detect `clientCapabilities._meta.terminal_output === true`
-- [ ] Add `supportsTerminalOutput` flag to `PiAcpSessionOpts`
-- [ ] When terminal IS supported (bash/tmux):
-  - [ ] `handleToolStart`: emit `content: [{ type: "terminal", terminalId }]` + `_meta.terminal_info { terminal_id, cwd }`
-  - [ ] `handleToolUpdate`: emit `_meta.terminal_output { terminal_id, data }` (no content, meta only)
-  - [ ] `handleToolEnd`: emit `_meta.terminal_exit { terminal_id, exit_code, signal: null }` alongside status
-- [ ] When terminal NOT supported: use Phase 1 `` ```console `` fallback
-- [ ] Add tests: terminal lifecycle sequence (info -> output -> exit)
-- [ ] Add tests: cwd included in terminal_info
-- [ ] Add tests: no content field when terminal_output meta is present
-- [ ] Add tests: fallback to code fences without terminal support
+- [x] Add `_meta: { piAcp: { toolName } }` to `tool_call` in `handleMessageUpdate`
+- [x] Add `_meta: { piAcp: { toolName } }` to `tool_call` in `handleToolStart`
+- [x] Add `_meta: { piAcp: { toolName } }` to `tool_call_update` in `handleToolUpdate`
+- [x] Add `_meta: { piAcp: { toolName } }` to `tool_call_update` in `handleToolEnd`
+- [x] Add `_meta: { piAcp: { toolName } }` to replayed tool calls in `replaySessionHistory`
+- [x] Merge `_meta` correctly when terminal meta is also present (no overwriting)
+- [x] Fix `toToolKind`: `lsp` -> `search`, `tmux` -> `execute`
+- [x] Fix `buildToolTitle` for `lsp`: `Definition src/index.ts:42`, `References MyClass`, etc.
+- [x] Fix `buildToolTitle` for `tmux`: `Tmux: <command>`, `Tmux <action> <name>`, etc.
+- [x] Fix `buildToolTitle` for `context_tag`: `Tag <name>`
+- [x] Fix `buildToolTitle` for `context_log`: `Context log`
+- [x] Fix `buildToolTitle` for `context_checkout`: `Checkout <target>`
+- [x] Fix `buildToolTitle` for `claudemon`: `Check quota`
+- [x] Add tests: `_meta.piAcp.toolName` present on all emissions
+- [x] Add tests: `_meta` merges correctly with terminal `_meta`
+- [x] Add tests: lsp kind/title for each action type
+- [x] Add tests: tmux kind/title for each action type
+- [x] Add tests: context tool titles
 
-## Phase 3: Tool call `_meta` and kind/title gaps
+## Phase 4: Client capabilities (v0.3.0) -- DONE
 
-claude-agent-acp includes `_meta.claudeCode.toolName` on every tool emission.
-GAPS.md identifies kind and title gaps for lsp, tmux, and context tools.
+- [x] Create `ClientCapabilityFlags` interface (`terminalOutput`, `terminalAuth`, `gatewayAuth`)
+- [x] Create `parseClientCapabilities(caps)` function
+- [x] Store parsed capabilities on `PiAcpAgent` instance from `initialize`
+- [x] Pass relevant flags to `PiAcpSession` via opts
+- [x] Adapt auth methods in `initialize` response based on capabilities
+- [x] Support `_meta.terminal-auth` with command metadata (following claude-agent-acp pattern)
+- [x] Add tests: capability parsing from various client configs
+- [x] Add tests: terminal output flag propagated to sessions
+- [x] Add tests: auth methods vary based on capabilities
+- [x] Add tests: null/undefined/missing capabilities handled gracefully
 
-- [ ] Add `_meta: { piAcp: { toolName } }` to `tool_call` in `handleMessageUpdate`
-- [ ] Add `_meta: { piAcp: { toolName } }` to `tool_call` in `handleToolStart`
-- [ ] Add `_meta: { piAcp: { toolName } }` to `tool_call_update` in `handleToolUpdate`
-- [ ] Add `_meta: { piAcp: { toolName } }` to `tool_call_update` in `handleToolEnd`
-- [ ] Add `_meta: { piAcp: { toolName } }` to replayed tool calls in `replaySessionHistory`
-- [ ] Merge `_meta` correctly when terminal meta is also present (no overwriting)
-- [ ] Fix `toToolKind`: `lsp` -> `search`, `tmux` -> `execute`
-- [ ] Fix `buildToolTitle` for `lsp`: `Definition src/index.ts:42`, `References MyClass`, etc.
-- [ ] Fix `buildToolTitle` for `tmux`: `Tmux: <command>`, `Tmux <action> <name>`, etc.
-- [ ] Fix `buildToolTitle` for `context_tag`: `Tag <name>`
-- [ ] Fix `buildToolTitle` for `context_log`: `Context log`
-- [ ] Fix `buildToolTitle` for `context_checkout`: `Checkout <target>`
-- [ ] Fix `buildToolTitle` for `claudemon`: `Check quota`
-- [ ] Add tests: `_meta.piAcp.toolName` present on all emissions
-- [ ] Add tests: `_meta` merges correctly with terminal `_meta`
-- [ ] Add tests: lsp kind/title for each action type
-- [ ] Add tests: tmux kind/title for each action type
-- [ ] Add tests: context tool titles
+## Phase 5: Streaming bash output formatting (v0.3.0) -- DONE
 
-## Phase 4: Client capabilities
+- [x] Add `toolCallNames: Map<string, string>` to `PiAcpSession` (toolCallId -> toolName)
+- [x] Populate map in `handleToolStart`, clean up in `handleToolEnd`
+- [x] In `handleToolUpdate`, look up tool name from map
+- [x] Bash/tmux without terminal: wrap accumulated output in `` ```console ``
+- [x] Bash/tmux with terminal: emit `_meta.terminal_output` only (no content)
+- [x] Other tools: emit plain text content (no wrapping)
+- [x] Each update is self-contained (full buffer, not delta) -- matches pi's behavior
+- [x] Add tests: streaming bash with `` ```console `` wrapping
+- [x] Add tests: streaming bash with terminal_output metadata
+- [x] Add tests: streaming non-bash tools remain plain text
+- [x] Add tests: toolCallNames map lifecycle (populated, used, cleaned up)
 
-Both reference implementations store and use `clientCapabilities` for feature
-detection and auth method selection.
+## Phase 6: Protocol test coverage (v0.3.0) -- DONE
 
-- [ ] Create `ClientCapabilityFlags` interface (`terminalOutput`, `terminalAuth`, `gatewayAuth`)
-- [ ] Create `parseClientCapabilities(caps)` function
-- [ ] Store parsed capabilities on `PiAcpAgent` instance from `initialize`
-- [ ] Pass relevant flags to `PiAcpSession` via opts
-- [ ] Adapt auth methods in `initialize` response based on capabilities
-- [ ] Support `_meta.terminal-auth` with command metadata (following claude-agent-acp pattern)
-- [ ] Add tests: capability parsing from various client configs
-- [ ] Add tests: terminal output flag propagated to sessions
-- [ ] Add tests: auth methods vary based on capabilities
-- [ ] Add tests: null/undefined/missing capabilities handled gracefully
+- [x] Extend `FakeAgentSession` to support `prompt()`, `setModel()`, `setThinkingLevel()`
+- [x] Add protocol-surface tests for `setSessionConfigOption` (error path)
+- [x] Add protocol-surface tests for `setSessionMode` (error path)
+- [x] Add protocol-surface tests for `unstable_setSessionModel` (error path)
+- [x] Add tests for auth methods varying based on client capabilities
 
-## Phase 5: Streaming bash output formatting
+## Phase 7: Correctness and UX improvements
 
-codex-acp accumulates per-command output and sends the full buffer wrapped
-in a code fence on each streaming update. pi already has rolling tail buffer
-but sends raw text.
+Derived from comparison with `zed-industries/claude-agent-acp`.
 
-- [ ] Add `toolCallNames: Map<string, string>` to `PiAcpSession` (toolCallId -> toolName)
-- [ ] Populate map in `handleToolStart`, clean up in `handleToolEnd`
-- [ ] In `handleToolUpdate`, look up tool name from map
-- [ ] Bash/tmux without terminal: wrap accumulated output in `` ```console ``
-- [ ] Bash/tmux with terminal: emit `_meta.terminal_output` only (no content)
-- [ ] Other tools: emit plain text content (no wrapping)
-- [ ] Each update is self-contained (full buffer, not delta) -- matches pi's behavior
-- [ ] Add tests: streaming bash with `` ```console `` wrapping
-- [ ] Add tests: streaming bash with terminal_output metadata
-- [ ] Add tests: streaming non-bash tools remain plain text
-- [ ] Add tests: toolCallNames map lifecycle (populated, used, cleaned up)
+### 7.1 Fix `markdownEscape` to use dynamic backtick fence wrapping
 
-## Phase 6: Protocol test coverage
+The current character-level escape approach fails on files containing
+backtick sequences, indented code blocks, blockquotes, and list markers.
+claude-agent-acp wraps the entire text in a dynamically-sized backtick
+fence that auto-adjusts length. This is simpler and strictly more correct.
 
-- [ ] Extend `FakeAgentSession` to support `prompt()`, `setModel()`, `setThinkingLevel()`
-- [ ] Add protocol-surface tests for `session/prompt`
-- [ ] Add protocol-surface tests for `setSessionConfigOption`
-- [ ] Add protocol-surface tests for `setSessionMode`
-- [ ] Add protocol-surface tests for `unstable_setSessionModel`
-- [ ] Add tests for `available_commands_update` emission
-- [ ] Add tests for `config_option_update` emission
+- [ ] Replace `markdownEscape()` in `tool-content.ts` with fence-wrapping approach
+- [ ] Find longest backtick sequence in text, use fence one longer
+- [ ] Handle trailing newline (no double newline before closing fence)
+- [ ] Update tests for new escape behavior
+- [ ] Verify read tool output renders correctly in Zed
 
-## Phase 7: MCP server wiring (blocked on pi SDK)
+### 7.2 Model alias resolution
+
+Let users type friendly model names like "opus", "sonnet", or "opus[1m]"
+in `setSessionConfigOption` and `unstable_setSessionModel`. Currently
+pi-acp requires exact `provider/modelId` strings.
+
+- [ ] Add `resolveModelPreference(models, preference)` function
+- [ ] Tokenize preference string: split on non-alphanumeric, lowercase, strip "claude"
+- [ ] Support exact match, substring match, and scored token match
+- [ ] Support context hint syntax (e.g. `[1m]`)
+- [ ] Use in `setSessionConfigOption` and `unstable_setSessionModel` as fallback
+- [ ] Add tests: exact match, alias match ("opus"), context hint ("opus[1m]"), no match
+
+### 7.3 Separate `terminal_output` from `terminal_exit` notification
+
+claude-agent-acp emits `terminal_output` as a separate `tool_call_update`
+notification before the final `tool_call_update` with `terminal_exit` and
+`status: completed`. This ensures Zed renders output before exit status.
+
+- [ ] In `handleToolEnd`, when terminal supported: emit `terminal_output` update first
+- [ ] Then emit `terminal_exit` + status in a second update
+- [ ] Update tests to verify two separate emissions
+
+### 7.4 Prompt queueing
+
+Support submitting a second prompt while the first is still executing.
+claude-agent-acp uses a `promptRunning` flag and `pendingMessages` map
+to queue prompts and resolve them in order.
+
+- [ ] Add `promptRunning` flag to `PiAcpSession`
+- [ ] Add `pendingMessages` queue (ordered map of pending prompts)
+- [ ] When prompt arrives during active turn: queue it, return promise
+- [ ] On turn completion: dequeue and execute next prompt
+- [ ] On cancel: resolve all pending with `cancelled`
+- [ ] Add tests: queued prompt executes after first completes
+- [ ] Add tests: cancel resolves all pending
+
+### 7.5 Exhaustive event handling
+
+claude-agent-acp uses an `unreachable()` function for exhaustive switch/case
+checking that logs unknown message types instead of silently ignoring them.
+
+- [ ] Add `unreachable(value, logger?)` utility function
+- [ ] Replace `default: break` in `handlePiEvent` with `unreachable` + log
+- [ ] Add structured logging for unknown event types (aids debugging)
+
+## Phase 8: MCP server wiring (blocked on pi SDK)
 
 - [ ] Convert ACP `McpServer[]` to pi MCP config format (following claude-agent-acp pattern)
 - [ ] Wire through to `createAgentSession()` when SDK supports it
@@ -139,23 +181,23 @@ but sends raw text.
 - [ ] Test with HTTP/SSE MCP server
 - [ ] Track upstream pi SDK issue/PR
 
-## Phase 8: Optional ACP features (deferred)
+## Phase 9: Optional ACP features (blocked on pi SDK)
 
 - [ ] `session/request_permission` (follow claude-agent-acp `canUseTool()` pattern)
 - [ ] `agent_plan` updates (follow codex-acp `update_plan()` pattern)
 - [ ] `readTextFile` / `writeTextFile` delegation (follow claude-agent-acp delegate pattern)
 - [ ] ACP terminal delegation
-- [ ] Model alias resolution (port claude-agent-acp `resolveModelPreference()`)
 
 ---
 
 ## Priority order
 
-1. **Phase 1** -- fix tool output rendering (unblocks basic usability)
-2. **Phase 2** -- terminal content lifecycle (proper Zed integration)
-3. **Phase 3** -- tool call metadata and kind/title gaps (UI polish)
-4. **Phase 4** -- client capabilities detection (feature gating)
-5. **Phase 5** -- streaming bash formatting (live output quality)
-6. **Phase 6** -- test coverage (quality)
-7. **Phase 7** -- MCP wiring (compliance, blocked)
-8. **Phase 8** -- optional features (completeness, deferred)
+1. ~~**Phase 1** -- fix tool output rendering (unblocks basic usability)~~ DONE v0.3.0
+2. ~~**Phase 2** -- terminal content lifecycle (proper Zed integration)~~ DONE v0.3.0
+3. ~~**Phase 3** -- tool call metadata and kind/title gaps (UI polish)~~ DONE v0.3.0
+4. ~~**Phase 4** -- client capabilities detection (feature gating)~~ DONE v0.3.0
+5. ~~**Phase 5** -- streaming bash formatting (live output quality)~~ DONE v0.3.0
+6. ~~**Phase 6** -- test coverage (quality)~~ DONE v0.3.0
+7. **Phase 7** -- correctness and UX improvements (reference implementation parity)
+8. **Phase 8** -- MCP wiring (compliance, blocked)
+9. **Phase 9** -- optional features (completeness, blocked)
