@@ -1,108 +1,137 @@
 # TODO
 
-Execution checklist for the `PLAN.md` refactor.
+Gap inventory derived from comparison with `zed-industries/claude-agent-acp`.
+See `docs/engineering/claude-acp-comparison.md` for the full analysis.
 
 Legend:
 
 - [ ] not started
 - [x] done
 
-## Phase 1: Correct session lifecycle
+---
 
-- [x] Remove single-live-session eviction (`closeAllExcept(...)`) from normal new/load flows
-- [x] Support multiple active `PiAcpSession` instances concurrently
-- [x] Add `unstable_closeSession`
-- [x] Add `unstable_resumeSession`
-- [x] Add `unstable_forkSession`
-- [x] Keep session ID to file-path resolution correct across new/load/resume/fork/close
-- [x] Add tests for multiple concurrent sessions
-- [x] Add tests for close/resume/fork behavior
+## Phase A: Fix tool output rendering (critical)
 
-## Phase 2: High-fidelity replay and live output
+Bash output is invisible/collapsed in Zed because pi-acp sends raw text
+without formatting. Claude ACP wraps bash output in `` ```console `` code
+fences and provides per-tool result formatting.
 
-- [x] Refactor assistant replay to preserve structured content, not only flattened text
-- [x] Replay assistant text blocks as `agent_message_chunk`
-- [x] Replay assistant thinking blocks as `agent_thought_chunk`
-- [x] Replay persisted tool calls as ACP tool calls instead of synthesizing generic completed calls
-- [x] Preserve replayed tool `rawInput` where available
-- [x] Preserve replayed tool `locations` where available
-- [x] Improve live tool titles from tool args
-- [x] Improve replayed tool titles from persisted data
-- [x] Improve tool `kind` mapping and keep it stable across live/replay paths
-- [x] Emit ACP-native diff content for `write` tool calls when args contain new file content
-- [x] Tighten `edit` diff rendering so live and replay paths match more closely
-- [x] Stop flattening structured tool results to plain text too early
-- [x] Add tests for replay fidelity
-- [x] Add tests for richer tool titles, kinds, locations, and diff content
+- [ ] Replace generic `toolResultToText()` with per-tool content formatters
+- [ ] Bash results: wrap output in `` ```console\n{output}\n``` `` code fence
+- [ ] Bash results: extract stdout/stderr separately, include exit code on non-zero
+- [ ] Bash errors: wrap in `` ```\n{error}\n``` `` code fence with `status: "failed"`
+- [ ] Read results: apply markdown escaping to prevent file content rendering as markdown
+- [ ] Read results: preserve structured content blocks (text, images) from pi tool results
+- [ ] Error results (all tools): wrap error text in code fences for visual distinction
+- [ ] Emit per-tool formatted content in both `handleToolEnd` (live) and replay paths
+- [ ] Add tests for bash output formatting (normal, error, empty output)
+- [ ] Add tests for read output formatting with markdown-sensitive content
+- [ ] Add tests for error output formatting across tool types
 
-## Phase 3: Usage and capability parity
+## Phase B: Terminal content lifecycle
 
-- [x] Emit `usage_update` notifications after completed assistant turns
-- [x] Return `PromptResponse.usage`
-- [x] Populate token fields from pi usage data
-- [x] Populate cumulative cost from pi usage/session stats
-- [x] Populate context size from the active pi model context window
-- [x] Set `promptCapabilities.embeddedContext = true`
-- [x] Tighten ACP resource and resource-link translation
-- [x] Add tests for usage updates
-- [x] Add tests for prompt usage response
-- [x] Add tests for embedded resource handling
+Zed supports terminal rendering via `_meta.terminal_*` extensions. Both
+claude-agent-acp and codex-acp implement the 3-phase lifecycle. Even without
+terminal support, the `` ```console `` fallback is necessary.
 
-## Phase 4: Terminal rendering improvement (deferred)
+- [ ] Store `clientCapabilities` from `initialize` request on the agent instance
+- [ ] Detect `clientCapabilities._meta.terminal_output === true`
+- [ ] When terminal output IS supported:
+  - [ ] Emit `tool_call` with `content: [{ type: "terminal", terminalId }]` and `_meta.terminal_info`
+  - [ ] Emit `tool_call_update` with `_meta.terminal_output` for bash streaming data
+  - [ ] Emit `tool_call_update` with `_meta.terminal_exit` on bash completion (exit_code, signal)
+- [ ] When terminal output is NOT supported:
+  - [ ] Use `` ```console `` code fence fallback (Phase A)
+- [ ] Pass terminal support flag through to `PiAcpSession`
+- [ ] Add tests for terminal lifecycle (info -> output -> exit)
+- [ ] Add tests for fallback to code fences when terminal not supported
 
-No ACP client currently consumes custom `_meta.terminal_*` extensions.
-Deferred until a client signals support or the ACP spec standardizes terminal content.
+## Phase C: Tool call metadata (`_meta`)
 
-- [ ] Detect client support for terminal output metadata
-- [ ] Emit ACP terminal content for bash tool calls when supported
-- [ ] Emit `_meta.terminal_info` for bash tool start
-- [ ] Emit `_meta.terminal_output` for bash output updates
-- [ ] Emit `_meta.terminal_exit` for bash completion
-- [ ] Keep plain-text fallback for clients without terminal support
-- [ ] Add tests for terminal metadata lifecycle
+Claude ACP includes `_meta.claudeCode.toolName` on every tool_call and
+tool_call_update. Zed may use this for icon selection or rendering mode.
 
-## Phase 5: Error and auth hardening
+- [ ] Add `_meta` with tool name to `tool_call` emissions in `handleMessageUpdate`
+- [ ] Add `_meta` with tool name to `tool_call` emissions in `handleToolStart`
+- [ ] Add `_meta` with tool name to `tool_call_update` emissions in `handleToolUpdate`
+- [ ] Add `_meta` with tool name to `tool_call_update` emissions in `handleToolEnd`
+- [ ] Add `_meta` with tool name to replayed tool calls in `replaySessionHistory`
+- [ ] Use `piAcp` namespace (not `claudeCode`) for `_meta` fields
+- [ ] Add tests for `_meta` presence on tool call emissions
 
-- [x] Wire in runtime auth error detection
-- [x] Map runtime auth failures to ACP `authRequired`
-- [x] Improve internal error mapping for session creation
-- [x] Improve internal error mapping for session loading
-- [x] Improve internal error mapping for prompt execution
-- [x] Standardize unknown-session handling across load/resume/close/prompt/cancel
-- [x] Add tests for auth-required error mapping
-- [x] Add tests for invalid-session handling
+## Phase D: Streaming bash output formatting
 
-## Phase 6: UX polish
+pi-acp already streams bash output incrementally via `tool_execution_update`
+events (pi's `onUpdate` callback). But the streaming content is unformatted.
 
-- [x] Improve session list titles using session name or a message-derived fallback
-- [x] Emit synchronized config updates for thinking-level changes
-- [x] Return concrete empty response objects instead of `void` where appropriate
-- [x] Review startup/update-notice behavior for avoidable overhead
-- [x] Add tests for session title fallback behavior
-- [x] Add tests for config update parity
+- [ ] Format streaming bash output in `handleToolUpdate` as `` ```console `` code fence
+- [ ] Handle the update-vs-replace semantics: each update replaces the previous
+      content (pi sends rolling tail buffer), so wrap each update independently
+- [ ] Verify Zed renders `tool_call_update` content replacements correctly
+- [ ] Add tests for streaming bash output formatting
 
-## Phase 7: Tests and conformance documentation
+## Phase E: Read tool content handling
 
-- [x] Add protocol-surface tests for `initialize`
-- [x] Add protocol-surface tests for `authenticate`
-- [x] Add protocol-surface tests for `session/new`
-- [x] Add protocol-surface tests for `session/load`
-- [x] Add protocol-surface tests for `session/list`
-- [ ] Add protocol-surface tests for `session/prompt` (requires DI or integration test)
-- [ ] Add protocol-surface tests for `setSessionConfigOption` (requires active session)
-- [ ] Add protocol-surface tests for `setSessionMode` (requires active session)
-- [ ] Add protocol-surface tests for `unstable_setSessionModel` (requires active session)
-- [ ] Add tests for `available_commands_update` (requires active session)
-- [ ] Add tests for `config_option_update` (requires active session)
-- [x] Add `docs/engineering/` conformance notes for ACP coverage and remaining limitations
-- [x] Update README limitations after implementation work lands
+- [ ] Implement `markdownEscape()` for read tool results (escape headings,
+      links, code fences, HTML tags in file content)
+- [ ] Handle image content blocks from read results (pi supports reading images)
+- [ ] Preserve line offset information in read result content when available
+- [ ] Add tests for markdown escaping edge cases
 
-## Confirmed exclusions for this refactor
+## Phase F: Client capabilities
 
-These are intentionally out of scope unless upstream pi changes.
+Claude ACP stores and uses `clientCapabilities` for feature detection and
+auth method selection. pi-acp currently ignores them.
 
-- [ ] Do not implement ACP `session/request_permission` in this refactor
-- [ ] Do not synthesize ACP `plan` / TODO updates without a real pi equivalent
-- [ ] Do not add ACP filesystem delegation (`readTextFile` / `writeTextFile`) in this refactor
-- [ ] Do not add ACP terminal delegation RPC methods in this refactor
-- [ ] Do not claim ACP per-session MCP wiring support until the pi SDK exposes it
+- [ ] Store `clientCapabilities` from `initialize` on the `PiAcpAgent` instance
+- [ ] Pass relevant capabilities to `PiAcpSession` on creation
+- [ ] Use `_meta.terminal_output` for terminal content lifecycle (Phase B)
+- [ ] Use `auth.terminal` and `_meta.terminal-auth` for auth method selection
+- [ ] Expose capability flags via a typed interface (not raw object access)
+- [ ] Add tests for capability detection and feature toggling
+
+## Phase G: Protocol test coverage
+
+Remaining test gaps from v0.2.0. These require an active session with a
+real or sufficiently faked `AgentSession`.
+
+- [ ] Add protocol-surface tests for `session/prompt`
+- [ ] Add protocol-surface tests for `setSessionConfigOption`
+- [ ] Add protocol-surface tests for `setSessionMode`
+- [ ] Add protocol-surface tests for `unstable_setSessionModel`
+- [ ] Add tests for `available_commands_update` emission
+- [ ] Add tests for `config_option_update` emission
+
+## Phase H: MCP server wiring
+
+Main remaining MUST-level ACP compliance gap. Requires upstream pi SDK support
+for per-session MCP server configuration.
+
+- [ ] Wire `mcpServers` from `session/new` and `session/load` through to `createAgentSession()`
+- [ ] Test with at least one MCP server (e.g. filesystem)
+- [ ] Track upstream pi SDK issue/PR for `mcpServers` support in `createAgentSession()`
+
+## Phase I: Optional ACP features
+
+Lower priority. Implement when upstream pi support exists or clients need them.
+
+- [ ] `session/request_permission` -- bridge to pi's extension permission system
+- [ ] `agent_plan` updates -- requires pi to expose a planning surface
+- [ ] ACP filesystem delegation (`readTextFile` / `writeTextFile`) -- allows
+      reading unsaved editor buffers instead of on-disk files
+- [ ] ACP terminal delegation (`terminal/create`, etc.) -- allows Zed to host
+      terminal sessions
+
+---
+
+## Priority order
+
+1. **Phase A** -- fix tool output rendering (unblocks basic usability)
+2. **Phase B** -- terminal content lifecycle (proper Zed integration)
+3. **Phase C** -- tool call metadata (UI polish)
+4. **Phase D** -- streaming bash formatting (live output quality)
+5. **Phase E** -- read tool escaping (correctness)
+6. **Phase F** -- client capabilities (feature detection)
+7. **Phase G** -- test coverage (quality)
+8. **Phase H** -- MCP wiring (compliance)
+9. **Phase I** -- optional features (completeness)
