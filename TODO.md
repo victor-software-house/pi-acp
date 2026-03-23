@@ -1,87 +1,105 @@
 # TODO
 
-Open issues, gaps, and known problems. Checked items are resolved.
+Execution checklist for the `PLAN.md` refactor.
 
-## ACP Protocol Conformance
+Legend:
 
-### MCP Server Wiring (MUST)
+- [ ] not started
+- [x] done
 
-- [ ] `session/new` and `session/load` accept `mcpServers` but do not connect to them
-- [ ] ACP spec: agents MUST connect to all provided MCP servers (stdio transport mandatory)
-- [ ] pi-mono supports MCP via `AgentSessionConfig.mcpServers` — needs wiring through `createAgentSession()`
+## Phase 1: Correct session lifecycle
 
-### session/request_permission (SHOULD)
+- [ ] Remove single-live-session eviction (`closeAllExcept(...)`) from normal new/load flows
+- [ ] Support multiple active `PiAcpSession` instances concurrently
+- [ ] Add `unstable_closeSession`
+- [ ] Add `unstable_resumeSession`
+- [ ] Add `unstable_forkSession`
+- [ ] Keep session ID to file-path resolution correct across new/load/resume/fork/close
+- [ ] Add tests for multiple concurrent sessions
+- [ ] Add tests for close/resume/fork behavior
 
-- [ ] Not implemented — pi executes tools without requesting client permission
-- [ ] ACP spec: agents SHOULD request permission before tool execution when client supports it
-- [ ] pi-mono has extension hooks (`permission-gate.ts` example) that could be used
+## Phase 2: High-fidelity replay and live output
 
-### config_option_update Notification (SHOULD)
+- [ ] Refactor assistant replay to preserve structured content, not only flattened text
+- [ ] Replay assistant text blocks as `agent_message_chunk`
+- [ ] Replay assistant thinking blocks as `agent_thought_chunk`
+- [ ] Replay persisted tool calls as ACP tool calls instead of synthesizing generic completed calls
+- [ ] Preserve replayed tool `rawInput` where available
+- [ ] Preserve replayed tool `locations` where available
+- [ ] Improve live tool titles from tool args
+- [ ] Improve replayed tool titles from persisted data
+- [ ] Improve tool `kind` mapping and keep it stable across live/replay paths
+- [ ] Emit ACP-native diff content for `write` tool calls when args contain new file content
+- [ ] Tighten `edit` diff rendering so live and replay paths match more closely
+- [ ] Stop flattening structured tool results to plain text too early
+- [ ] Add tests for replay fidelity
+- [ ] Add tests for richer tool titles, kinds, locations, and diff content
 
-- [x] `setSessionConfigOption` returns updated `configOptions`
-- [x] `setSessionMode` emits `config_option_update` via `emitConfigOptionUpdate()`
-- [x] `unstable_setSessionModel` emits `config_option_update` via `emitConfigOptionUpdate()`
+## Phase 3: Usage and capability parity
 
-### session_info_update Notification (MAY)
+- [ ] Emit `usage_update` notifications after completed assistant turns
+- [ ] Return `PromptResponse.usage`
+- [ ] Populate token fields from pi usage data
+- [ ] Populate cumulative cost from pi usage/session stats
+- [ ] Populate context size from the active pi model context window
+- [ ] Set `promptCapabilities.embeddedContext = true`
+- [ ] Tighten ACP resource and resource-link translation
+- [ ] Add tests for usage updates
+- [ ] Add tests for prompt usage response
+- [ ] Add tests for embedded resource handling
 
-- [x] Emitted by `/name` command (pushes title + updatedAt to client)
-- [ ] Not emitted automatically for other metadata changes (message count, etc.)
-- [ ] ACP spec: agents MAY push `session_info_update` to keep session titles in sync
+## Phase 4: Terminal rendering improvement
 
-### Filesystem Delegation (Client Capability)
+- [ ] Detect client support for terminal output metadata
+- [ ] Emit ACP terminal content for bash tool calls when supported
+- [ ] Emit `_meta.terminal_info` for bash tool start
+- [ ] Emit `_meta.terminal_output` for bash output updates
+- [ ] Emit `_meta.terminal_exit` for bash completion
+- [ ] Keep plain-text fallback for clients without terminal support
+- [ ] Add tests for terminal metadata lifecycle
 
-- [ ] `fs/read_text_file` and `fs/write_text_file` not implemented
-- [ ] pi reads/writes locally — no delegation to client
-- [ ] Not advertised in agentCapabilities (correct behavior)
+## Phase 5: Error and auth hardening
 
-### Terminal Delegation (Client Capability)
+- [ ] Wire in runtime auth error detection
+- [ ] Map runtime auth failures to ACP `authRequired`
+- [ ] Improve internal error mapping for session creation
+- [ ] Improve internal error mapping for session loading
+- [ ] Improve internal error mapping for prompt execution
+- [ ] Standardize unknown-session handling across load/resume/close/prompt/cancel
+- [ ] Add tests for auth-required error mapping
+- [ ] Add tests for invalid-session handling
 
-- [ ] `terminal/*` methods not implemented
-- [ ] pi executes commands locally — no delegation to client
-- [ ] Not advertised in agentCapabilities (correct behavior)
+## Phase 6: UX polish
 
-### Agent Plan Updates (MAY)
+- [ ] Improve session list titles using session name or a message-derived fallback
+- [ ] Emit synchronized config updates for thinking-level changes
+- [ ] Return concrete empty response objects instead of `void` where appropriate
+- [ ] Review startup/update-notice behavior for avoidable overhead
+- [ ] Add tests for session title fallback behavior
+- [ ] Add tests for config update parity
 
-- [ ] `agent_plan` session update type not emitted
-- [ ] ACP spec: agents MAY send plan updates to describe their approach before executing
+## Phase 7: Tests and conformance documentation
 
-## Test Coverage
+- [ ] Add protocol-surface tests for `initialize`
+- [ ] Add protocol-surface tests for `authenticate`
+- [ ] Add protocol-surface tests for `session/new`
+- [ ] Add protocol-surface tests for `session/load`
+- [ ] Add protocol-surface tests for `session/list`
+- [ ] Add protocol-surface tests for `session/prompt`
+- [ ] Add protocol-surface tests for `setSessionConfigOption`
+- [ ] Add protocol-surface tests for `setSessionMode`
+- [ ] Add protocol-surface tests for `unstable_setSessionModel`
+- [ ] Add tests for `available_commands_update`
+- [ ] Add tests for `config_option_update`
+- [ ] Add `docs/engineering/` conformance notes for ACP coverage and remaining limitations
+- [ ] Update README limitations after implementation work lands
 
-### Protocol Surface (zero coverage)
+## Confirmed exclusions for this refactor
 
-- [ ] No test for `initialize` request/response shape
-- [ ] No test for `authenticate` request/response
-- [ ] No test for `session/new` response (sessionId, configOptions, modes, models, commands)
-- [ ] No test for `session/load` response with history replay
-- [ ] No test for `session/list` response shape (sessions array, pagination)
-- [ ] No test for `session/prompt` response shape (stopReason)
-- [ ] No test for `setSessionConfigOption` behavior and response
-- [ ] No test for `setSessionMode` behavior and response
-- [ ] No test for `unstable_setSessionModel` behavior and response
-- [ ] No test for `available_commands_update` emission after session creation
-- [ ] No test for `config_option_update` emission after config change
+These are intentionally out of scope unless upstream pi changes.
 
-### Translation Layer (covered)
-
-- [x] pi message text extraction (pi-messages)
-- [x] pi tool result text extraction (pi-tools)
-- [x] ACP ContentBlock to pi message conversion (prompt)
-- [x] pi stop reason to ACP stop reason mapping
-- [x] pi event to ACP session/update translation (text, thinking, tools)
-- [x] edit tool diff emission
-- [x] tool call locations
-- [x] startup info
-- [x] cursor validation on session/list
-
-### Integration (zero coverage)
-
-- [ ] No end-to-end test: JSON-RPC stdin -> stdout with real protocol exchange
-- [ ] No test for terminal auth (`--terminal-login`) behavior
-- [ ] No test with actual pi AgentSession (all tests use FakeAgentSession)
-
-## Documentation
-
-- [x] ROADMAP.md with priorities and milestones
-- [ ] No conformance matrix documenting which ACP spec requirements are met
-- [x] README "Limitations" section covers all known gaps
-- [ ] No `docs/engineering/` notes carried over from old repo (compliance plan, reference findings)
+- [ ] Do not implement ACP `session/request_permission` in this refactor
+- [ ] Do not synthesize ACP `plan` / TODO updates without a real pi equivalent
+- [ ] Do not add ACP filesystem delegation (`readTextFile` / `writeTextFile`) in this refactor
+- [ ] Do not add ACP terminal delegation RPC methods in this refactor
+- [ ] Do not claim ACP per-session MCP wiring support until the pi SDK exposes it
