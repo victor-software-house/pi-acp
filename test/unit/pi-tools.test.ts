@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { toolResultToText } from "../../src/acp/translate/pi-tools.js";
+import { toolResultToText } from "@pi-acp/acp/translate/pi-tools.js";
 
 describe("toolResultToText", () => {
 	test("extracts text from content blocks", () => {

@@ -40,13 +40,13 @@ import {
 	VERSION as PI_VERSION,
 	SessionManager as PiSessionManager,
 } from "@mariozechner/pi-coding-agent";
-import { hasPiAuthConfigured } from "../pi-auth/status.js";
-import { buildAuthMethods } from "./auth.js";
-import { piAgentDir, quietStartupEnabled, skillCommandsEnabled } from "./pi-settings.js";
-import { PiAcpSession, SessionManager } from "./session.js";
-import { extractAssistantText, extractUserMessageText } from "./translate/pi-messages.js";
-import { toolResultToText } from "./translate/pi-tools.js";
-import { acpPromptToPiMessage } from "./translate/prompt.js";
+import { buildAuthMethods } from "@pi-acp/acp/auth.js";
+import { piAgentDir, quietStartupEnabled, skillCommandsEnabled } from "@pi-acp/acp/pi-settings.js";
+import { PiAcpSession, SessionManager } from "@pi-acp/acp/session.js";
+import { extractAssistantText, extractUserMessageText } from "@pi-acp/acp/translate/pi-messages.js";
+import { toolResultToText } from "@pi-acp/acp/translate/pi-tools.js";
+import { acpPromptToPiMessage } from "@pi-acp/acp/translate/prompt.js";
+import { hasPiAuthConfigured } from "@pi-acp/pi-auth/status.js";
 
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 

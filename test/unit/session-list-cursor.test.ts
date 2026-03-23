@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { PiAcpAgent } from "../../src/acp/agent.js";
+import { PiAcpAgent } from "@pi-acp/acp/agent.js";
 import { asAgentConn, FakeAgentSideConnection } from "../helpers/fakes.js";
 
 describe("listSessions cursor validation", () => {

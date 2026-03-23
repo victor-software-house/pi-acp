@@ -1,8 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-	extractAssistantText,
-	extractUserMessageText,
-} from "../../src/acp/translate/pi-messages.js";
+import { extractAssistantText, extractUserMessageText } from "@pi-acp/acp/translate/pi-messages.js";
 
 describe("extractUserMessageText", () => {
 	test("supports string content", () => {

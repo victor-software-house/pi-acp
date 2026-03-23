@@ -5,6 +5,10 @@
 		{
 			"name": "zod",
 			"specifier": "eslint-plugin-zod"
+		},
+		{
+			"name": "@limegrass/import-alias",
+			"specifier": "@limegrass/eslint-plugin-import-alias"
 		}
 	],
 	"rules": {
@@ -49,7 +53,8 @@
 		"zod/require-brand-type-parameter": "error",
 		"zod/require-error-message": "error",
 		"zod/require-schema-suffix": "error",
-		"zod/schema-error-property-style": "warn"
+		"zod/schema-error-property-style": "warn",
+		"@limegrass/import-alias/import-alias": "error"
 	},
 	"overrides": [
 		{

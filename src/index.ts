@@ -1,6 +1,6 @@
 import { platform } from "node:os";
 import { AgentSideConnection, ndJsonStream } from "@agentclientprotocol/sdk";
-import { PiAcpAgent } from "./acp/agent.js";
+import { PiAcpAgent } from "@pi-acp/acp/agent.js";
 
 // Terminal Auth entrypoint: ACP client launches with `--terminal-login`.
 if (process.argv.includes("--terminal-login")) {

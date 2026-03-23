@@ -13,8 +13,8 @@ import {
 import type { AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
 import type { AssistantMessageEvent, ToolCall } from "@mariozechner/pi-ai";
 import type { AgentSession, AgentSessionEvent } from "@mariozechner/pi-coding-agent";
+import { toolResultToText } from "@pi-acp/acp/translate/pi-tools.js";
 import * as z from "zod";
-import { toolResultToText } from "./translate/pi-tools.js";
 
 export type StopReason = "end_turn" | "cancelled" | "max_tokens" | "error";
 
@@ -103,8 +103,8 @@ function parseToolInput(tc: ToolCall): ToolArgs {
 
 const toolArgsSchema = z
 	.object({
-		path: z.string().optional(),
-		oldText: z.string().optional(),
+		path: z.string().trim().optional(),
+		oldText: z.string().trim().optional(),
 	})
 	.loose();
 

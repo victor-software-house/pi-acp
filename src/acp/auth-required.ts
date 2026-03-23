@@ -3,7 +3,7 @@
  */
 
 import { RequestError } from "@agentclientprotocol/sdk";
-import { buildAuthMethods } from "./auth.js";
+import { buildAuthMethods } from "@pi-acp/acp/auth.js";
 
 const AUTH_ERROR_PATTERNS = [
 	"api key",
