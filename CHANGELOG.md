@@ -1,3 +1,15 @@
+# [0.3.0](https://github.com/victor-software-house/pi-acp/compare/v0.2.0...v0.3.0) (2026-03-23)
+
+
+### Bug Fixes
+
+* remove zod .trim() from tool-content schemas to preserve raw output ([606eeac](https://github.com/victor-software-house/pi-acp/commit/606eeac3212c94b3b2456f0b8a665622352521a9))
+
+
+### Features
+
+* implement phases 1-6 of tool output and protocol conformance plan ([ae0d96c](https://github.com/victor-software-house/pi-acp/commit/ae0d96cbcbbfbe95dc1ec2adb990f57a27989e11))
+
 # [0.2.0](https://github.com/victor-software-house/pi-acp/compare/v0.1.2...v0.2.0) (2026-03-23)
 
 
