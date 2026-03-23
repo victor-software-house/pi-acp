@@ -12,6 +12,7 @@ pre-commit:
   commands:
     format:
       stage_fixed: true
+      glob: "*.{ts,json}"
       run: bunx biome check --write {staged_files}
     lint-types:
       run: bun run typecheck

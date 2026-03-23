@@ -49,6 +49,10 @@ Both `modes` and `models` are also returned for backward compatibility.
 - Strict TS: `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noPropertyAccessFromIndexSignature`
 - Explicit null/undefined comparisons -- no truthy coercion on nullable strings
 
+## Conformance
+
+See [TODO.md](TODO.md) for gap inventory, [ROADMAP.md](ROADMAP.md) for priorities.
+
 ## Source control
 
 - **DO NOT** commit unless explicitly asked!

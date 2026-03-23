@@ -161,17 +161,28 @@ test/
 
 ## Limitations
 
-### Not yet implemented
+### MUST-level gaps
 
-- **MCP servers** -- accepted in `session/new` and `session/load` params but not wired through to pi.
-- **ACP filesystem delegation** (`fs/read_text_file`, `fs/write_text_file`) -- pi reads/writes locally.
-- **ACP terminal delegation** (`terminal/*`) -- pi executes commands locally.
+- **MCP servers** -- accepted in `session/new` and `session/load` params but not wired through to pi. ACP requires agents to connect to all provided MCP servers. This is the main compliance gap.
+
+### SHOULD-level gaps
+
 - **`session/request_permission`** -- pi does not request permission from ACP clients before tool execution.
+- **`config_option_update`** -- may not be emitted in all config change paths. Needs verification.
+
+### Not implemented (MAY / client capabilities)
+
+- **`session_info_update`** -- session metadata changes not pushed to client.
+- **`agent_plan`** -- plan updates not emitted before tool execution.
+- **ACP filesystem delegation** (`fs/read_text_file`, `fs/write_text_file`) -- pi reads/writes locally. Not advertised.
+- **ACP terminal delegation** (`terminal/*`) -- pi executes commands locally. Not advertised.
 
 ### Design decisions
 
 - pi does not have real session modes (ask/architect/code). The `modes` field exposes thinking levels for backward compatibility with clients that do not support `configOptions`.
 - `configOptions` is the preferred configuration mechanism. Zed uses it exclusively when present.
+
+See [TODO.md](TODO.md) for full gap inventory and [ROADMAP.md](ROADMAP.md) for priorities.
 
 ## License
 
