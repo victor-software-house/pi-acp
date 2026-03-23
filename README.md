@@ -168,11 +168,10 @@ test/
 ### SHOULD-level gaps
 
 - **`session/request_permission`** -- pi does not request permission from ACP clients before tool execution.
-- **`config_option_update`** -- may not be emitted in all config change paths. Needs verification.
 
 ### Not implemented (MAY / client capabilities)
 
-- **`session_info_update`** -- session metadata changes not pushed to client.
+- **`session_info_update`** -- partially implemented (emitted by `/name` command); not emitted automatically for other metadata changes.
 - **`agent_plan`** -- plan updates not emitted before tool execution.
 - **ACP filesystem delegation** (`fs/read_text_file`, `fs/write_text_file`) -- pi reads/writes locally. Not advertised.
 - **ACP terminal delegation** (`terminal/*`) -- pi executes commands locally. Not advertised.
@@ -183,6 +182,12 @@ test/
 - `configOptions` is the preferred configuration mechanism. Zed uses it exclusively when present.
 
 See [TODO.md](TODO.md) for full gap inventory and [ROADMAP.md](ROADMAP.md) for priorities.
+
+## Release
+
+Releases are automated via [semantic-release](https://semantic-release.gitbook.io/) on pushes to `main`. The pipeline runs typecheck, lint, tests, and `npm pack --dry-run` before publishing. npm trusted publishing (OIDC) is used -- no long-lived npm tokens.
+
+Commit messages must follow [Conventional Commits](https://www.conventionalcommits.org/). Commitlint enforces this locally via lefthook and in CI.
 
 ## License
 

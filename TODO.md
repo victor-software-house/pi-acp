@@ -18,12 +18,14 @@ Open issues, gaps, and known problems. Checked items are resolved.
 
 ### config_option_update Notification (SHOULD)
 
-- [ ] `setSessionConfigOption` and `setSessionMode` change state but may not emit `config_option_update` notification
-- [ ] Need to verify: does the client get notified when config changes?
+- [x] `setSessionConfigOption` returns updated `configOptions`
+- [x] `setSessionMode` emits `config_option_update` via `emitConfigOptionUpdate()`
+- [x] `unstable_setSessionModel` emits `config_option_update` via `emitConfigOptionUpdate()`
 
 ### session_info_update Notification (MAY)
 
-- [ ] Not implemented — session metadata changes (name, message count) are not pushed to client
+- [x] Emitted by `/name` command (pushes title + updatedAt to client)
+- [ ] Not emitted automatically for other metadata changes (message count, etc.)
 - [ ] ACP spec: agents MAY push `session_info_update` to keep session titles in sync
 
 ### Filesystem Delegation (Client Capability)
@@ -79,8 +81,7 @@ Open issues, gaps, and known problems. Checked items are resolved.
 
 ## Documentation
 
-- [ ] No `ROADMAP.md` with priorities and milestones
+- [x] ROADMAP.md with priorities and milestones
 - [ ] No conformance matrix documenting which ACP spec requirements are met
-- [ ] README "Limitations" section is incomplete (missing `session_info_update`, `agent_plan`, `request_permission`)
+- [x] README "Limitations" section covers all known gaps
 - [ ] No `docs/engineering/` notes carried over from old repo (compliance plan, reference findings)
-- [ ] AGENTS.md "Not yet implemented" section duplicates README without adding value
