@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -41,7 +41,7 @@ import {
 	SessionManager as PiSessionManager,
 } from "@mariozechner/pi-coding-agent";
 import { buildAuthMethods } from "@pi-acp/acp/auth";
-import { piAgentDir, quietStartupEnabled, skillCommandsEnabled } from "@pi-acp/acp/pi-settings";
+import { quietStartupEnabled, skillCommandsEnabled } from "@pi-acp/acp/pi-settings";
 import { PiAcpSession, SessionManager } from "@pi-acp/acp/session";
 import { extractAssistantText, extractUserMessageText } from "@pi-acp/acp/translate/pi-messages";
 import { toolResultToText } from "@pi-acp/acp/translate/pi-tools";
@@ -120,6 +120,8 @@ const pkg = readNearestPackageJson(import.meta.url);
 export class PiAcpAgent implements ACPAgent {
 	private readonly conn: AgentSideConnection;
 	private readonly sessions = new SessionManager();
+	/** Cache of sessionId → file path, populated by listSessions and newSession. */
+	private readonly sessionPaths = new Map<string, string>();
 
 	dispose(): void {
 		this.sessions.disposeAll();
@@ -191,6 +193,10 @@ export class PiAcpAgent implements ACPAgent {
 		}
 
 		const sessionId = piSession.sessionManager.getSessionId();
+		const sessionFile = piSession.sessionManager.getSessionFile();
+		if (sessionFile !== undefined) {
+			this.sessionPaths.set(sessionId, sessionFile);
+		}
 
 		const session = new PiAcpSession({
 			sessionId,
@@ -281,6 +287,23 @@ export class PiAcpAgent implements ACPAgent {
 		await session.cancel();
 	}
 
+	/**
+	 * Resolve a session ID to a file path.
+	 * Checks the local cache first (populated by listSessions/newSession),
+	 * falls back to a full listAll() scan on cache miss.
+	 */
+	private async resolveSessionFile(sessionId: string): Promise<string | null> {
+		const cached = this.sessionPaths.get(sessionId);
+		if (cached !== undefined) return cached;
+
+		const all = await PiSessionManager.listAll();
+		for (const s of all) {
+			this.sessionPaths.set(s.id, s.path);
+		}
+
+		return this.sessionPaths.get(sessionId) ?? null;
+	}
+
 	async listSessions(params: ListSessionsRequest): Promise<ListSessionsResponse> {
 		const cwd = params.cwd;
 
@@ -288,6 +311,11 @@ export class PiAcpAgent implements ACPAgent {
 			cwd !== undefined && cwd !== null
 				? await PiSessionManager.list(cwd)
 				: await PiSessionManager.listAll();
+
+		for (const s of raw) {
+			this.sessionPaths.set(s.id, s.path);
+		}
+
 		const sessions = raw.map((s) => ({
 			id: s.id,
 			cwd: s.cwd,
@@ -330,7 +358,7 @@ export class PiAcpAgent implements ACPAgent {
 
 		this.sessions.close(params.sessionId);
 
-		const sessionFile = findPiSessionFile(params.sessionId);
+		const sessionFile = await this.resolveSessionFile(params.sessionId);
 		if (sessionFile === null) {
 			throw RequestError.invalidParams(`Unknown sessionId: ${params.sessionId}`);
 		}
@@ -949,49 +977,6 @@ function buildCommandList(
 	}
 
 	return commands;
-}
-
-function findPiSessionFile(sessionId: string): string | null {
-	const sessionsDir = join(piAgentDir(), "sessions");
-	if (!existsSync(sessionsDir)) return null;
-
-	const walkJsonl = (dir: string): string | null => {
-		let entries: string[];
-		try {
-			entries = readdirSync(dir);
-		} catch {
-			return null;
-		}
-
-		for (const name of entries) {
-			const p = join(dir, name);
-			try {
-				const st = statSync(p);
-				if (st.isDirectory()) {
-					const found = walkJsonl(p);
-					if (found !== undefined) return found;
-				} else if (st.isFile() && name.endsWith(".jsonl")) {
-					try {
-						const firstLine = readFileSync(p, "utf8").split("\n")[0];
-						if (firstLine === undefined) continue;
-						const header: unknown = JSON.parse(firstLine);
-						if (
-							typeof header === "object" &&
-							header !== null &&
-							"type" in header &&
-							header.type === "session" &&
-							"id" in header &&
-							header.id === sessionId
-						)
-							return p;
-					} catch {}
-				}
-			} catch {}
-		}
-		return null;
-	};
-
-	return walkJsonl(sessionsDir);
 }
 
 function buildUpdateNotice(): string | null {
