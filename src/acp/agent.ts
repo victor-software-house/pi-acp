@@ -940,10 +940,10 @@ function buildCommandList(
 
 	const runner = piSession.extensionRunner;
 	if (runner) {
-		for (const { command } of runner.getRegisteredCommandsWithPaths()) {
+		for (const cmd of runner.getRegisteredCommands()) {
 			commands.push({
-				name: command.name,
-				description: command.description ?? `(extension)`,
+				name: cmd.name,
+				description: cmd.description ?? "(extension)",
 			});
 		}
 	}

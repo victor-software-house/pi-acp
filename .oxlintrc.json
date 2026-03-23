@@ -58,6 +58,12 @@
 	},
 	"overrides": [
 		{
+			"files": ["**/translate/pi-tools.ts"],
+			"rules": {
+				"zod/prefer-string-schema-with-trim": "off"
+			}
+		},
+		{
 			"files": ["**/*.test.ts"],
 			"rules": {
 				"typescript/await-thenable": "off",
