@@ -11,6 +11,36 @@ Reference repos:
 
 ---
 
+## 0. Startup banner, update checks, and local builtin commands
+
+### Reference adapters
+
+- `claude-agent-acp` does **not** emit a startup banner, startup prelude, or
+  startup-info `_meta` payload during session creation.
+- `codex-acp` does not emit a startup banner either.
+- Neither reference performs a runtime update check, semver parsing, or
+  `npm view` lookup.
+
+### pi-acp
+
+pi-acp currently emits a startup info block and inherited a runtime update-check
+path from the earlier subprocess-oriented design.
+
+That behavior is not reference-backed and should be removed.
+
+### Important exception: builtin command execution
+
+This cleanup does **not** mean pi-acp can drop its local builtin command
+handlers. pi's in-process `AgentSession.prompt()` executes extension commands
+and expands skills/prompt templates, but it does not execute pi interactive
+builtin slash commands such as `/compact`, `/session`, `/name`, or `/export`.
+
+pi-acp must therefore keep local ACP command handling for those commands, while
+still sourcing prompt templates, skills, and extension commands dynamically from
+`AgentSession`.
+
+---
+
 ## 1. Tool output content formatting
 
 **This is the root cause of bash output not rendering / expanding in Zed.**

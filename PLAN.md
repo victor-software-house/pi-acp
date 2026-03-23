@@ -15,15 +15,19 @@ Reference implementations (patterns to follow):
 ## Context
 
 v0.2.0 shipped multi-session support, structured replay, usage tracking, error
-hardening, and UX polish. What remains is primarily **tool output quality** --
-the reason bash output does not render properly in Zed -- plus conformance
-improvements from the reference implementation comparison.
+hardening, and UX polish. v0.3.0 closed the main tool-output and conformance
+gaps. What remains is mostly **cleanup and ownership tightening**:
+
+- remove non-reference UX accretions (startup banner, runtime update notice)
+- keep local ACP-only command handlers where pi's `AgentSession` does not offer
+  an equivalent surface
+- continue correctness and protocol parity work from the reference comparison
 
 The issues fall into three tiers:
 
 1. **Critical** -- tool output is invisible/collapsed in Zed (phases 1-2)
 2. **High** -- missing metadata, kind/title gaps, no capability detection (phases 3-5)
-3. **Medium** -- test coverage, MCP wiring, optional features (phases 6-8)
+3. **Medium** -- cleanup, test coverage, MCP wiring, optional features (phases 6A-8)
 
 ---
 
@@ -636,6 +640,68 @@ Follow codex-acp's test pattern: it uses a `MockClient` that implements the
 
 - All ACP RPC methods have at least one test
 - Notification emissions have dedicated tests
+
+---
+
+## Phase 6A: Reference cleanup and ownership boundaries
+
+**Goal:** remove svkozak-style startup/update clutter, keep only the ACP surface
+that pi's in-process `AgentSession` embedding actually requires.
+
+### Findings from reference review
+
+- `claude-agent-acp` and `codex-acp` do **not** emit a startup banner or
+  prelude text on session creation.
+- Neither reference performs a runtime update check, semver parsing, or
+  `npm view` lookup.
+- pi-acp **does** need local builtin command handlers because `AgentSession`
+  intercepts extension commands, skill commands, and prompt templates, but it
+  does not execute pi's interactive builtin slash commands such as `/compact`
+  or `/session`.
+- The builtin command advertisement should stay, but as local ACP adapter data,
+  not as inherited helper code.
+
+### Work items
+
+- Delete runtime update-check code:
+  - `cachedUpdateNotice`
+  - `buildUpdateNotice()`
+  - `isSemver()`
+  - `compareSemver()`
+- Delete startup banner code:
+  - `buildStartupInfo()`
+  - local `addSection()` helper
+  - startup-info emission plumbing in `newSession` / `loadSession`
+  - startup-info session state and tests
+- Keep builtin command execution for ACP-only coverage of pi interactive
+  commands:
+  - `/compact`
+  - `/autocompact`
+  - `/export`
+  - `/session`
+  - `/name`
+  - `/steering`
+  - `/follow-up`
+  - `/changelog`
+- Rewrite command advertisement locally:
+  - replace `builtinAvailableCommands()` with `const BUILTIN_COMMANDS`
+  - replace `mergeCommands()` with a clearer local deduplication helper
+  - continue sourcing prompts, skills, and extension commands from
+    `AgentSession`
+- Keep `/changelog` support and `findChangelog()` because this is a real ACP
+  command surface, independent of startup/update behavior.
+- Replace `readNearestPackageJson()` with a direct JSON import for adapter
+  version metadata, following `claude-agent-acp`.
+
+### Acceptance criteria
+
+- No startup banner or startup-info `_meta` is emitted during session creation
+- No runtime update-check path exists
+- Builtin ACP command execution remains available and documented in code
+- Available commands still include prompts, skills, extension commands, and the
+  local builtin ACP commands
+- README and planning docs no longer present startup banner or update notice as
+  reference-backed behavior
 
 ---
 

@@ -110,6 +110,52 @@ Legend:
 - [x] Add protocol-surface tests for `unstable_setSessionModel` (error path)
 - [x] Add tests for auth methods varying based on client capabilities
 
+## Phase 6A: Reference cleanup and ownership boundaries
+
+Derived from direct comparison with `zed-industries/claude-agent-acp` and
+`zed-industries/codex-acp`, plus validation of pi's in-process `AgentSession`
+API surface.
+
+### 6A.1 Remove startup banner and runtime update-check code
+
+The reference adapters do not emit a startup banner and do not perform runtime
+version/update checks. pi-acp inherited both behaviors from the earlier
+subprocess-oriented design and should remove them.
+
+- [ ] Delete `cachedUpdateNotice`
+- [ ] Delete `buildUpdateNotice()`
+- [ ] Delete `isSemver()`
+- [ ] Delete `compareSemver()`
+- [ ] Delete `buildStartupInfo()`
+- [ ] Delete local `addSection()` helper inside startup-info generation
+- [ ] Remove startup-info emission from `newSession`
+- [ ] Remove startup-info `_meta` payloads from session responses
+- [ ] Remove startup-info emission from `loadSession`
+- [ ] Remove `quietStartup` gating from ACP session creation flow
+- [ ] Remove startup-info state/helpers from `PiAcpSession`
+- [ ] Remove startup-info-specific tests
+
+### 6A.2 Keep builtin ACP command execution, but rewrite local command advertisement
+
+`AgentSession.prompt()` executes extension commands, expands skill commands, and
+expands prompt templates, but it does not execute pi interactive builtin slash
+commands such as `/compact` or `/session`. The ACP adapter must keep these local
+handlers.
+
+- [ ] Keep builtin handlers for `/compact`, `/autocompact`, `/export`, `/session`, `/name`, `/steering`, `/follow-up`, `/changelog`
+- [ ] Replace `builtinAvailableCommands()` with `const BUILTIN_COMMANDS`
+- [ ] Replace `mergeCommands()` with a clearer local deduplication helper
+- [ ] Continue sourcing prompts from `piSession.promptTemplates`
+- [ ] Continue sourcing skills from `piSession.resourceLoader.getSkills()`
+- [ ] Continue sourcing extension commands from `piSession.extensionRunner.getRegisteredCommands()`
+- [ ] Add/adjust tests for available command composition after cleanup
+
+### 6A.3 Keep `/changelog`, remove unrelated helper clutter
+
+- [ ] Keep `findChangelog()` for `/changelog`
+- [ ] Replace `readNearestPackageJson()` with package JSON import metadata
+- [ ] Remove dead imports and comments left behind by the cleanup
+
 ## Phase 7: Correctness and UX improvements
 
 Derived from comparison with `zed-industries/claude-agent-acp`.
@@ -198,6 +244,7 @@ checking that logs unknown message types instead of silently ignoring them.
 4. ~~**Phase 4** -- client capabilities detection (feature gating)~~ DONE v0.3.0
 5. ~~**Phase 5** -- streaming bash formatting (live output quality)~~ DONE v0.3.0
 6. ~~**Phase 6** -- test coverage (quality)~~ DONE v0.3.0
-7. **Phase 7** -- correctness and UX improvements (reference implementation parity)
-8. **Phase 8** -- MCP wiring (compliance, blocked)
-9. **Phase 9** -- optional features (completeness, blocked)
+7. **Phase 6A** -- reference cleanup and ownership boundaries
+8. **Phase 7** -- correctness and UX improvements (reference implementation parity)
+9. **Phase 8** -- MCP wiring (compliance, blocked)
+10. **Phase 9** -- optional features (completeness, blocked)
