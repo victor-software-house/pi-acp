@@ -1,7 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import {
 	type Agent as ACPAgent,
 	type AgentSideConnection,
@@ -43,7 +42,6 @@ import {
 	type AgentSession,
 	type CreateAgentSessionResult,
 	createAgentSession,
-	VERSION as PI_VERSION,
 	SessionManager as PiSessionManager,
 } from "@mariozechner/pi-coding-agent";
 import { buildAuthMethods } from "@pi-acp/acp/auth";
@@ -52,7 +50,8 @@ import {
 	type ClientCapabilityFlags,
 	parseClientCapabilities,
 } from "@pi-acp/acp/client-capabilities";
-import { quietStartupEnabled, skillCommandsEnabled } from "@pi-acp/acp/pi-settings";
+import { resolveModelPreference } from "@pi-acp/acp/model-alias";
+import { skillCommandsEnabled } from "@pi-acp/acp/pi-settings";
 import {
 	buildToolTitle,
 	PiAcpSession,
@@ -67,41 +66,45 @@ import { acpPromptToPiMessage } from "@pi-acp/acp/translate/prompt";
 import { formatToolContent } from "@pi-acp/acp/translate/tool-content";
 import { hasPiAuthConfigured } from "@pi-acp/pi-auth/status";
 
+import pkgJson from "../../package.json" with { type: "json" };
+
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
-function builtinAvailableCommands(): AvailableCommand[] {
-	return [
-		{
-			name: "compact",
-			description: "Manually compact the session context",
-			input: { hint: "optional custom instructions" },
-		},
-		{
-			name: "autocompact",
-			description: "Toggle automatic context compaction",
-			input: { hint: "on|off|toggle" },
-		},
-		{ name: "export", description: "Export session to an HTML file in the session cwd" },
-		{ name: "session", description: "Show session stats (messages, tokens, cost, session file)" },
-		{ name: "name", description: "Set session display name", input: { hint: "<name>" } },
-		{
-			name: "steering",
-			description: "Get/set pi steering message delivery mode",
-			input: { hint: "(no args to show) all | one-at-a-time" },
-		},
-		{
-			name: "follow-up",
-			description: "Get/set pi follow-up message delivery mode",
-			input: { hint: "(no args to show) all | one-at-a-time" },
-		},
-		{ name: "changelog", description: "Show pi changelog" },
-	];
-}
+/** Builtin ACP slash commands handled directly by the adapter. */
+const BUILTIN_COMMANDS: readonly AvailableCommand[] = [
+	{
+		name: "compact",
+		description: "Manually compact the session context",
+		input: { hint: "optional custom instructions" },
+	},
+	{
+		name: "autocompact",
+		description: "Toggle automatic context compaction",
+		input: { hint: "on|off|toggle" },
+	},
+	{ name: "export", description: "Export session to an HTML file in the session cwd" },
+	{ name: "session", description: "Show session stats (messages, tokens, cost, session file)" },
+	{ name: "name", description: "Set session display name", input: { hint: "<name>" } },
+	{
+		name: "steering",
+		description: "Get/set pi steering message delivery mode",
+		input: { hint: "(no args to show) all | one-at-a-time" },
+	},
+	{
+		name: "follow-up",
+		description: "Get/set pi follow-up message delivery mode",
+		input: { hint: "(no args to show) all | one-at-a-time" },
+	},
+	{ name: "changelog", description: "Show pi changelog" },
+] as const;
 
-function mergeCommands(a: AvailableCommand[], b: AvailableCommand[]): AvailableCommand[] {
-	const out: AvailableCommand[] = [];
+/**
+ * Deduplicate commands by name. First occurrence wins.
+ */
+function deduplicateCommands(commands: AvailableCommand[]): AvailableCommand[] {
 	const seen = new Set<string>();
-	for (const c of [...a, ...b]) {
+	const out: AvailableCommand[] = [];
+	for (const c of commands) {
 		if (seen.has(c.name)) continue;
 		seen.add(c.name);
 		out.push(c);
@@ -144,8 +147,6 @@ function truncateSessionTitle(text: string): string | null {
 	return `${oneLine.slice(0, SESSION_TITLE_MAX - 1)}…`;
 }
 
-const pkg = readNearestPackageJson(import.meta.url);
-
 export class PiAcpAgent implements ACPAgent {
 	private readonly conn: AgentSideConnection;
 	private readonly sessions = new SessionManager();
@@ -176,9 +177,9 @@ export class PiAcpAgent implements ACPAgent {
 		return {
 			protocolVersion: requested === supportedVersion ? requested : supportedVersion,
 			agentInfo: {
-				name: pkg.name,
+				name: pkgJson.name,
 				title: "pi ACP adapter",
-				version: pkg.version,
+				version: pkgJson.version,
 			},
 			authMethods: buildAuthMethods({
 				supportsTerminalAuthMeta: this.clientCapabilities.terminalAuth,
@@ -251,32 +252,9 @@ export class PiAcpAgent implements ACPAgent {
 
 		this.sessions.register(session);
 
-		const quietStartup = quietStartupEnabled(params.cwd);
-		const updateNotice = buildUpdateNotice();
-
-		const preludeText = quietStartup
-			? updateNotice !== null
-				? `${updateNotice}\n`
-				: ""
-			: buildStartupInfo({ cwd: params.cwd, updateNotice });
-
-		if (preludeText) session.setStartupInfo(preludeText);
-
 		const modes = buildThinkingModes(piSession);
 		const models = buildModelState(piSession);
 		const configOptions = buildConfigOptions(modes, models);
-
-		const response = {
-			sessionId: session.sessionId,
-			configOptions,
-			modes,
-			models,
-			_meta: {
-				piAcp: { startupInfo: preludeText || null },
-			},
-		};
-
-		if (preludeText) setTimeout(() => session.sendStartupInfoIfPending(), 0);
 
 		const enableSkillCommands = skillCommandsEnabled(params.cwd);
 		setTimeout(() => {
@@ -287,14 +265,19 @@ export class PiAcpAgent implements ACPAgent {
 						sessionId: session.sessionId,
 						update: {
 							sessionUpdate: "available_commands_update",
-							availableCommands: mergeCommands(commands, builtinAvailableCommands()),
+							availableCommands: deduplicateCommands([...commands, ...BUILTIN_COMMANDS]),
 						},
 					});
 				} catch {}
 			})();
 		}, 0);
 
-		return response;
+		return {
+			sessionId: session.sessionId,
+			configOptions,
+			modes,
+			models,
+		};
 	}
 
 	async authenticate(_params: AuthenticateRequest) {
@@ -578,7 +561,7 @@ export class PiAcpAgent implements ACPAgent {
 						sessionId: session.sessionId,
 						update: {
 							sessionUpdate: "available_commands_update",
-							availableCommands: mergeCommands(commands, builtinAvailableCommands()),
+							availableCommands: deduplicateCommands([...commands, ...BUILTIN_COMMANDS]),
 						},
 					});
 				} catch {}
@@ -589,7 +572,6 @@ export class PiAcpAgent implements ACPAgent {
 			configOptions,
 			modes,
 			models,
-			_meta: { piAcp: { startupInfo: null } },
 		};
 	}
 
@@ -662,7 +644,7 @@ export class PiAcpAgent implements ACPAgent {
 						sessionId: session.sessionId,
 						update: {
 							sessionUpdate: "available_commands_update",
-							availableCommands: mergeCommands(commands, builtinAvailableCommands()),
+							availableCommands: deduplicateCommands([...commands, ...BUILTIN_COMMANDS]),
 						},
 					});
 				} catch {}
@@ -730,7 +712,7 @@ export class PiAcpAgent implements ACPAgent {
 						sessionId: session.sessionId,
 						update: {
 							sessionUpdate: "available_commands_update",
-							availableCommands: mergeCommands(commands, builtinAvailableCommands()),
+							availableCommands: deduplicateCommands([...commands, ...BUILTIN_COMMANDS]),
 						},
 					});
 				} catch {}
@@ -770,33 +752,14 @@ export class PiAcpAgent implements ACPAgent {
 		params: SetSessionModelRequest,
 	): Promise<SetSessionModelResponse | void> {
 		const session = this.sessions.get(params.sessionId);
+		const available = session.piSession.modelRegistry.getAvailable();
 
-		let provider: string | null = null;
-		let modelId: string | null = null;
-
-		if (params.modelId.includes("/")) {
-			const [p, ...rest] = params.modelId.split("/");
-			provider = p ?? null;
-			modelId = rest.join("/");
-		} else {
-			modelId = params.modelId;
-		}
-
-		if (provider === null) {
-			const available = session.piSession.modelRegistry.getAvailable();
-			const found = available.find((m) => m.id === modelId);
-			if (found) {
-				provider = found.provider;
-				modelId = found.id;
-			}
-		}
-
-		if (provider === null || modelId === null) {
+		const resolved = resolveModelPreference(available, params.modelId);
+		if (resolved === null) {
 			throw RequestError.invalidParams(`Unknown modelId: ${params.modelId}`);
 		}
 
-		const available = session.piSession.modelRegistry.getAvailable();
-		const model = available.find((m) => m.provider === provider && m.id === modelId);
+		const model = available.find((m) => m.provider === resolved.provider && m.id === resolved.id);
 		if (!model) {
 			throw RequestError.invalidParams(`Unknown modelId: ${params.modelId}`);
 		}
@@ -813,32 +776,13 @@ export class PiAcpAgent implements ACPAgent {
 		const value = String(params.value);
 
 		if (configId === "model") {
-			let provider: string | null = null;
-			let modelId: string | null = null;
-
-			if (value.includes("/")) {
-				const [p, ...rest] = value.split("/");
-				provider = p ?? null;
-				modelId = rest.join("/");
-			} else {
-				modelId = value;
-			}
-
-			if (provider === null) {
-				const available = session.piSession.modelRegistry.getAvailable();
-				const found = available.find((m) => m.id === modelId);
-				if (found) {
-					provider = found.provider;
-					modelId = found.id;
-				}
-			}
-
-			if (provider === null || modelId === null) {
+			const available = session.piSession.modelRegistry.getAvailable();
+			const resolved = resolveModelPreference(available, value);
+			if (resolved === null) {
 				throw RequestError.invalidParams(`Unknown model: ${value}`);
 			}
 
-			const available = session.piSession.modelRegistry.getAvailable();
-			const model = available.find((m) => m.provider === provider && m.id === modelId);
+			const model = available.find((m) => m.provider === resolved.provider && m.id === resolved.id);
 			if (!model) {
 				throw RequestError.invalidParams(`Unknown model: ${value}`);
 			}
@@ -1248,72 +1192,6 @@ function buildCommandList(
 	return commands;
 }
 
-let cachedUpdateNotice: string | null | undefined;
-
-function buildUpdateNotice(): string | null {
-	if (cachedUpdateNotice !== undefined) return cachedUpdateNotice;
-	try {
-		const installed = PI_VERSION;
-		if (!installed || !isSemver(installed)) {
-			cachedUpdateNotice = null;
-			return null;
-		}
-
-		const latestRes = spawnSync("npm", ["view", "@mariozechner/pi-coding-agent", "version"], {
-			encoding: "utf-8",
-			timeout: 800,
-		});
-		const latest = String(latestRes.stdout ?? "")
-			.trim()
-			.replace(/^v/i, "");
-		if (!latest || !isSemver(latest)) {
-			cachedUpdateNotice = null;
-			return null;
-		}
-		if (compareSemver(latest, installed) <= 0) {
-			cachedUpdateNotice = null;
-			return null;
-		}
-
-		cachedUpdateNotice = `New version available: v${latest} (installed v${installed}). Run: \`npm i -g @mariozechner/pi-coding-agent\``;
-		return cachedUpdateNotice;
-	} catch {
-		cachedUpdateNotice = null;
-		return null;
-	}
-}
-
-function buildStartupInfo(opts: { cwd: string; updateNotice: string | null }): string {
-	const md: string[] = [];
-
-	if (PI_VERSION) {
-		md.push(`pi v${PI_VERSION}`);
-		md.push("---");
-		md.push("");
-	}
-
-	const addSection = (title: string, items: string[]) => {
-		const cleaned = items.map((s) => s.trim()).filter(Boolean);
-		if (cleaned.length === 0) return;
-		md.push(`## ${title}`);
-		for (const item of cleaned) md.push(`- ${item}`);
-		md.push("");
-	};
-
-	const contextItems: string[] = [];
-	const contextPath = join(opts.cwd, "AGENTS.md");
-	if (existsSync(contextPath)) contextItems.push(contextPath);
-	addSection("Context", contextItems);
-
-	if (opts.updateNotice !== undefined && opts.updateNotice !== null) {
-		md.push("---");
-		md.push(opts.updateNotice);
-		md.push("");
-	}
-
-	return `${md.join("\n").trim()}\n`;
-}
-
 function findChangelog(): string | null {
 	try {
 		const whichCmd = process.platform === "win32" ? "where" : "which";
@@ -1339,48 +1217,4 @@ function findChangelog(): string | null {
 	} catch {}
 
 	return null;
-}
-
-function isSemver(v: string): boolean {
-	return /^\d+\.\d+\.\d+(?:[-+].+)?$/.test(v);
-}
-
-function compareSemver(a: string, b: string): number {
-	const pa = a
-		.split(/[.-]/)
-		.slice(0, 3)
-		.map((n) => Number(n));
-	const pb = b
-		.split(/[.-]/)
-		.slice(0, 3)
-		.map((n) => Number(n));
-	for (let i = 0; i < 3; i++) {
-		const da = pa[i] ?? 0;
-		const db = pb[i] ?? 0;
-		if (da > db) return 1;
-		if (da < db) return -1;
-	}
-	return 0;
-}
-
-function readNearestPackageJson(metaUrl: string): { name: string; version: string } {
-	const fallback = { name: "pi-acp", version: "0.0.0" };
-	try {
-		let dir = dirname(fileURLToPath(metaUrl));
-		for (let i = 0; i < 6; i++) {
-			const p = join(dir, "package.json");
-			if (existsSync(p)) {
-				const raw: unknown = JSON.parse(readFileSync(p, "utf-8"));
-				if (typeof raw !== "object" || raw === null) return fallback;
-				const name = "name" in raw && typeof raw.name === "string" ? raw.name : fallback.name;
-				const version =
-					"version" in raw && typeof raw.version === "string" ? raw.version : fallback.version;
-				return { name, version };
-			}
-			dir = dirname(dir);
-		}
-	} catch {
-		// fall through
-	}
-	return fallback;
 }

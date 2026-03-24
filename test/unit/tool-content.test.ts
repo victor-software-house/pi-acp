@@ -14,32 +14,59 @@ type R = Record<string, unknown>;
 // markdownEscape
 // ---------------------------------------------------------------------------
 
-describe("markdownEscape", () => {
-	test("escapes headings at line start", () => {
-		expect(markdownEscape("# Heading")).toBe("\\# Heading");
-		expect(markdownEscape("## Sub")).toBe("\\## Sub");
+describe("markdownEscape (dynamic backtick fence)", () => {
+	test("wraps plain text in triple backtick fence", () => {
+		expect(markdownEscape("hello world")).toBe("```\nhello world\n```");
 	});
 
-	test("does not escape # in the middle of text", () => {
-		expect(markdownEscape("a # b")).toBe("a # b");
+	test("wraps headings without character-level escaping", () => {
+		expect(markdownEscape("# Heading")).toBe("```\n# Heading\n```");
 	});
 
-	test("escapes square brackets", () => {
-		expect(markdownEscape("[link](url)")).toBe("\\[link\\](url)");
+	test("wraps markdown links without character-level escaping", () => {
+		expect(markdownEscape("[link](url)")).toBe("```\n[link](url)\n```");
 	});
 
-	test("escapes angle brackets", () => {
-		expect(markdownEscape("<div>")).toBe("\\<div>");
+	test("wraps HTML tags without character-level escaping", () => {
+		expect(markdownEscape("<div>")).toBe("```\n<div>\n```");
 	});
 
-	test("escapes horizontal rules", () => {
-		expect(markdownEscape("---")).toBe("\\---");
-		expect(markdownEscape("***")).toBe("\\***");
-		expect(markdownEscape("___")).toBe("\\___");
+	test("wraps horizontal rules without character-level escaping", () => {
+		expect(markdownEscape("---")).toBe("```\n---\n```");
 	});
 
-	test("preserves normal text", () => {
-		expect(markdownEscape("hello world")).toBe("hello world");
+	test("auto-adjusts fence length for content with backticks", () => {
+		const text = "some ```code``` here";
+		const result = markdownEscape(text);
+		expect(result).toBe("````\nsome ```code``` here\n````");
+	});
+
+	test("auto-adjusts for long backtick sequences", () => {
+		const text = "````````long fence````````";
+		const result = markdownEscape(text);
+		// Fence must be at least 9 backticks (longest run is 8)
+		expect(result.startsWith("`".repeat(9))).toBe(true);
+		expect(result.endsWith("`".repeat(9))).toBe(true);
+		expect(result).toContain(text);
+	});
+
+	test("avoids double newline before closing fence for trailing newline", () => {
+		const text = "line1\nline2\n";
+		const result = markdownEscape(text);
+		expect(result).toBe("```\nline1\nline2\n```");
+	});
+
+	test("returns empty string for empty input", () => {
+		expect(markdownEscape("")).toBe("");
+	});
+
+	test("handles multiline content with markdown formatting", () => {
+		const text = "# Title\n\n- item1\n- item2\n\n> quote\n\n```js\ncode()\n```";
+		const result = markdownEscape(text);
+		// Should use 4 backticks since content has 3-backtick sequences
+		expect(result.startsWith("````\n")).toBe(true);
+		expect(result.endsWith("\n````")).toBe(true);
+		expect(result).toContain(text);
 	});
 });
 
@@ -201,7 +228,7 @@ describe("formatToolContent - tmux", () => {
 // ---------------------------------------------------------------------------
 
 describe("formatToolContent - read", () => {
-	test("markdown-escapes text content", () => {
+	test("wraps text content in backtick fence", () => {
 		const content = formatToolContent(
 			"read",
 			{ content: [{ type: "text", text: "# Heading\n[link](url)" }] },
@@ -209,7 +236,7 @@ describe("formatToolContent - read", () => {
 		);
 		expect(content).toHaveLength(1);
 		const inner = (content[0] as R)["content"] as R;
-		expect(inner["text"]).toBe("\\# Heading\n\\[link\\](url)");
+		expect(inner["text"]).toBe("```\n# Heading\n[link](url)\n```");
 	});
 
 	test("returns empty for empty content", () => {

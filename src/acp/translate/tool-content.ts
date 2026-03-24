@@ -133,22 +133,44 @@ export function extractContentBlocks(
 }
 
 // ---------------------------------------------------------------------------
-// Markdown escaping (ported from claude-agent-acp tools.ts)
+// Markdown escaping via dynamic backtick fence wrapping
 // ---------------------------------------------------------------------------
 
 /**
- * Escape text that would be interpreted as markdown formatting.
+ * Find the longest consecutive backtick sequence in a string.
+ */
+function longestBacktickRun(text: string): number {
+	let max = 0;
+	let current = 0;
+	for (const ch of text) {
+		if (ch === "`") {
+			current++;
+			if (current > max) max = current;
+		} else {
+			current = 0;
+		}
+	}
+	return max;
+}
+
+/**
+ * Wrap text in a dynamically-sized backtick fence to prevent markdown rendering.
  *
- * Prevents file content from being rendered as headings, links, code
- * blocks, or horizontal rules when displayed in an ACP client.
+ * Instead of character-level escaping (which fails on files containing backtick
+ * sequences, indented code blocks, blockquotes, and list markers), this wraps
+ * the entire text in a backtick fence whose length exceeds any backtick sequence
+ * in the content. This approach is simpler and strictly more correct (following
+ * the claude-agent-acp pattern).
  */
 export function markdownEscape(text: string): string {
-	return text
-		.replace(/^(#{1,6})\s/gm, "\\$1 ") // headings
-		.replace(/\[/g, "\\[") // link open
-		.replace(/\]/g, "\\]") // link close
-		.replace(/^([-*_])\1{2,}$/gm, "\\$1$1$1") // horizontal rules (---, ***, ___)
-		.replace(/</g, "\\<"); // HTML tags
+	if (text === "") return "";
+
+	const fenceLen = Math.max(3, longestBacktickRun(text) + 1);
+	const fence = "`".repeat(fenceLen);
+
+	// Avoid a trailing double newline before the closing fence
+	const body = text.endsWith("\n") ? text.slice(0, -1) : text;
+	return `${fence}\n${body}\n${fence}`;
 }
 
 // ---------------------------------------------------------------------------

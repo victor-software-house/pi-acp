@@ -31,7 +31,7 @@ Legend:
 - [x] Update `handleToolUpdate()` to accept `toolName` parameter
 - [x] Update `handleToolUpdate()` to wrap bash/tmux output in `` ```console ``
 - [x] Update `replaySessionHistory()` in `agent.ts` to use `formatToolContent`
-- [ ] Remove `toolResultToText()` from `pi-tools.ts` (kept for backward compat, no production callers)
+- [x] Remove `toolResultToText()` from `pi-tools.ts` (removed in Phase 6A along with its test file)
 - [x] Add tests: bash output (normal, error, empty, non-zero exit)
 - [x] Add tests: read output (plain text, markdown-sensitive content, images)
 - [x] Add tests: error formatting across tool types
@@ -110,7 +110,7 @@ Legend:
 - [x] Add protocol-surface tests for `unstable_setSessionModel` (error path)
 - [x] Add tests for auth methods varying based on client capabilities
 
-## Phase 6A: Reference cleanup and ownership boundaries
+## Phase 6A: Reference cleanup and ownership boundaries -- DONE
 
 Derived from direct comparison with `zed-industries/claude-agent-acp` and
 `zed-industries/codex-acp`, plus validation of pi's in-process `AgentSession`
@@ -118,106 +118,76 @@ API surface.
 
 ### 6A.1 Remove startup banner and runtime update-check code
 
-The reference adapters do not emit a startup banner and do not perform runtime
-version/update checks. pi-acp inherited both behaviors from the earlier
-subprocess-oriented design and should remove them.
-
-- [ ] Delete `cachedUpdateNotice`
-- [ ] Delete `buildUpdateNotice()`
-- [ ] Delete `isSemver()`
-- [ ] Delete `compareSemver()`
-- [ ] Delete `buildStartupInfo()`
-- [ ] Delete local `addSection()` helper inside startup-info generation
-- [ ] Remove startup-info emission from `newSession`
-- [ ] Remove startup-info `_meta` payloads from session responses
-- [ ] Remove startup-info emission from `loadSession`
-- [ ] Remove `quietStartup` gating from ACP session creation flow
-- [ ] Remove startup-info state/helpers from `PiAcpSession`
-- [ ] Remove startup-info-specific tests
+- [x] Delete `cachedUpdateNotice`
+- [x] Delete `buildUpdateNotice()`
+- [x] Delete `isSemver()`
+- [x] Delete `compareSemver()`
+- [x] Delete `buildStartupInfo()`
+- [x] Delete local `addSection()` helper inside startup-info generation
+- [x] Remove startup-info emission from `newSession`
+- [x] Remove startup-info `_meta` payloads from session responses
+- [x] Remove startup-info emission from `loadSession`
+- [x] Remove `quietStartup` gating from ACP session creation flow
+- [x] Remove startup-info state/helpers from `PiAcpSession`
+- [x] Remove startup-info-specific tests
 
 ### 6A.2 Keep builtin ACP command execution, but rewrite local command advertisement
 
-`AgentSession.prompt()` executes extension commands, expands skill commands, and
-expands prompt templates, but it does not execute pi interactive builtin slash
-commands such as `/compact` or `/session`. The ACP adapter must keep these local
-handlers.
-
-- [ ] Keep builtin handlers for `/compact`, `/autocompact`, `/export`, `/session`, `/name`, `/steering`, `/follow-up`, `/changelog`
-- [ ] Replace `builtinAvailableCommands()` with `const BUILTIN_COMMANDS`
-- [ ] Replace `mergeCommands()` with a clearer local deduplication helper
-- [ ] Continue sourcing prompts from `piSession.promptTemplates`
-- [ ] Continue sourcing skills from `piSession.resourceLoader.getSkills()`
-- [ ] Continue sourcing extension commands from `piSession.extensionRunner.getRegisteredCommands()`
-- [ ] Add/adjust tests for available command composition after cleanup
+- [x] Keep builtin handlers for `/compact`, `/autocompact`, `/export`, `/session`, `/name`, `/steering`, `/follow-up`, `/changelog`
+- [x] Replace `builtinAvailableCommands()` with `const BUILTIN_COMMANDS`
+- [x] Replace `mergeCommands()` with `deduplicateCommands()`
+- [x] Continue sourcing prompts from `piSession.promptTemplates`
+- [x] Continue sourcing skills from `piSession.resourceLoader.getSkills()`
+- [x] Continue sourcing extension commands from `piSession.extensionRunner.getRegisteredCommands()`
 
 ### 6A.3 Keep `/changelog`, remove unrelated helper clutter
 
-- [ ] Keep `findChangelog()` for `/changelog`
-- [ ] Replace `readNearestPackageJson()` with package JSON import metadata
-- [ ] Remove dead imports and comments left behind by the cleanup
+- [x] Keep `findChangelog()` for `/changelog`
+- [x] Replace `readNearestPackageJson()` with package JSON import (`pkgJson`)
+- [x] Remove dead `toolResultToText()` from `pi-tools.ts` (and its test file)
+- [x] Remove dead imports and comments left behind by the cleanup
 
-## Phase 7: Correctness and UX improvements
+## Phase 7: Correctness and UX improvements -- DONE
 
 Derived from comparison with `zed-industries/claude-agent-acp`.
 
 ### 7.1 Fix `markdownEscape` to use dynamic backtick fence wrapping
 
-The current character-level escape approach fails on files containing
-backtick sequences, indented code blocks, blockquotes, and list markers.
-claude-agent-acp wraps the entire text in a dynamically-sized backtick
-fence that auto-adjusts length. This is simpler and strictly more correct.
-
-- [ ] Replace `markdownEscape()` in `tool-content.ts` with fence-wrapping approach
-- [ ] Find longest backtick sequence in text, use fence one longer
-- [ ] Handle trailing newline (no double newline before closing fence)
-- [ ] Update tests for new escape behavior
-- [ ] Verify read tool output renders correctly in Zed
+- [x] Replace `markdownEscape()` in `tool-content.ts` with fence-wrapping approach
+- [x] Find longest backtick sequence in text, use fence one longer
+- [x] Handle trailing newline (no double newline before closing fence)
+- [x] Update tests for new escape behavior (unit and component)
 
 ### 7.2 Model alias resolution
 
-Let users type friendly model names like "opus", "sonnet", or "opus[1m]"
-in `setSessionConfigOption` and `unstable_setSessionModel`. Currently
-pi-acp requires exact `provider/modelId` strings.
-
-- [ ] Add `resolveModelPreference(models, preference)` function
-- [ ] Tokenize preference string: split on non-alphanumeric, lowercase, strip "claude"
-- [ ] Support exact match, substring match, and scored token match
-- [ ] Support context hint syntax (e.g. `[1m]`)
-- [ ] Use in `setSessionConfigOption` and `unstable_setSessionModel` as fallback
-- [ ] Add tests: exact match, alias match ("opus"), context hint ("opus[1m]"), no match
+- [x] Add `resolveModelPreference(models, preference)` in `model-alias.ts`
+- [x] Tokenize preference string: split on non-alphanumeric, lowercase, strip "claude"
+- [x] Support exact match on `provider/id` and `id` alone
+- [x] Scored token match with non-numeric match requirement
+- [x] Support context hint syntax (e.g. `sonnet[3.5]`)
+- [x] Use in `setSessionConfigOption` and `unstable_setSessionModel`
+- [x] Add tests: exact match, alias match ("opus"), context hint, no match, case-insensitive
 
 ### 7.3 Separate `terminal_output` from `terminal_exit` notification
 
-claude-agent-acp emits `terminal_output` as a separate `tool_call_update`
-notification before the final `tool_call_update` with `terminal_exit` and
-`status: completed`. This ensures Zed renders output before exit status.
-
-- [ ] In `handleToolEnd`, when terminal supported: emit `terminal_output` update first
-- [ ] Then emit `terminal_exit` + status in a second update
-- [ ] Update tests to verify two separate emissions
+- [x] In `handleToolEnd`, when terminal supported: emit `terminal_output` update first
+- [x] Then emit `terminal_exit` + status in a second update
+- [x] Update tests to verify two separate emissions and ordering
 
 ### 7.4 Prompt queueing
 
-Support submitting a second prompt while the first is still executing.
-claude-agent-acp uses a `promptRunning` flag and `pendingMessages` map
-to queue prompts and resolve them in order.
-
-- [ ] Add `promptRunning` flag to `PiAcpSession`
-- [ ] Add `pendingMessages` queue (ordered map of pending prompts)
-- [ ] When prompt arrives during active turn: queue it, return promise
-- [ ] On turn completion: dequeue and execute next prompt
-- [ ] On cancel: resolve all pending with `cancelled`
-- [ ] Add tests: queued prompt executes after first completes
-- [ ] Add tests: cancel resolves all pending
+- [x] Add `promptRunning` flag to `PiAcpSession`
+- [x] Add `pendingMessages` queue (array of pending prompts)
+- [x] When prompt arrives during active turn: queue it, return promise
+- [x] On turn completion: dequeue and execute next prompt via `dequeueNextPrompt()`
+- [x] On cancel: resolve all pending with `cancelled`
+- [x] Add tests: queued prompt executes after first completes
+- [x] Add tests: cancel resolves all pending
 
 ### 7.5 Exhaustive event handling
 
-claude-agent-acp uses an `unreachable()` function for exhaustive switch/case
-checking that logs unknown message types instead of silently ignoring them.
-
-- [ ] Add `unreachable(value, logger?)` utility function
-- [ ] Replace `default: break` in `handlePiEvent` with `unreachable` + log
-- [ ] Add structured logging for unknown event types (aids debugging)
+- [x] Add `unreachable(value, context?)` utility in `unreachable.ts`
+- [x] Replace `default: break` in `handlePiEvent` with `unreachable` + log
 
 ## Phase 8: MCP server wiring (blocked on pi SDK)
 
@@ -244,7 +214,7 @@ checking that logs unknown message types instead of silently ignoring them.
 4. ~~**Phase 4** -- client capabilities detection (feature gating)~~ DONE v0.3.0
 5. ~~**Phase 5** -- streaming bash formatting (live output quality)~~ DONE v0.3.0
 6. ~~**Phase 6** -- test coverage (quality)~~ DONE v0.3.0
-7. **Phase 6A** -- reference cleanup and ownership boundaries
-8. **Phase 7** -- correctness and UX improvements (reference implementation parity)
-9. **Phase 8** -- MCP wiring (compliance, blocked)
-10. **Phase 9** -- optional features (completeness, blocked)
+7. ~~**Phase 6A** -- reference cleanup and ownership boundaries~~ DONE
+8. ~~**Phase 7** -- correctness and UX improvements (reference implementation parity)~~ DONE
+9. **Phase 8** -- MCP wiring (compliance, blocked on pi SDK)
+10. **Phase 9** -- optional features (completeness, blocked on pi SDK)

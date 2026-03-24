@@ -15,16 +15,14 @@
 - [x] Phase 5: streaming bash output formatting (console fences and terminal_output)
 - [x] Phase 6: test coverage for protocol surface and tool output
 
-## P2 -- Correctness and UX Improvements
+## P2 -- Correctness and UX Improvements -- DONE
 
-Derived from comparison with `zed-industries/claude-agent-acp`.
-
-- [ ] **Reference cleanup and ownership tightening** -- remove the startup banner, startup-info `_meta`, `quietStartup` ACP gating, and runtime update-check helpers (`buildUpdateNotice`, `isSemver`, `compareSemver`). Keep builtin ACP command execution for commands that pi's in-process `AgentSession` does not execute itself (`/compact`, `/session`, `/name`, `/export`, `/autocompact`, `/steering`, `/follow-up`, `/changelog`). Rewrite local command advertisement as static adapter data plus dynamic command discovery from prompts, skills, and extension commands.
-- [ ] **Fix `markdownEscape` to use dynamic backtick fence wrapping** -- the current character-level escape approach fails on files containing backtick sequences, indented code blocks, blockquotes, and list markers. claude-agent-acp wraps the entire text in a dynamically-sized backtick fence that auto-adjusts to escape any backtick sequences in the content. This is simpler and strictly more correct.
-- [ ] **Model alias resolution** -- let users type friendly model names like "opus", "sonnet", or "opus[1m]" in `setSessionConfigOption` and `unstable_setSessionModel`. Port the tokenized matching and scoring approach from claude-agent-acp's `resolveModelPreference()`. Currently pi-acp requires exact `provider/modelId` strings.
-- [ ] **Separate `terminal_output` notification from `terminal_exit`** -- claude-agent-acp emits `terminal_output` as a separate `tool_call_update` notification (meta only, no content) before the final `tool_call_update` with `terminal_exit` and `status: completed`. pi-acp currently merges terminal_exit into the same emission as the final status. The separate notification ensures Zed renders output before exit status.
-- [ ] **Prompt queueing** -- support submitting a second prompt while the first is still executing. claude-agent-acp uses a `promptRunning` flag and `pendingMessages` map to queue prompts and resolve them in order. pi-acp currently blocks on the active turn.
-- [ ] **Exhaustive event handling with `unreachable()` helper** -- claude-agent-acp uses an `unreachable()` function for exhaustive switch/case checking that logs unknown message types. pi-acp silently ignores unknown events with `default: break`, hiding potential protocol evolution or SDK changes.
+- [x] Reference cleanup and ownership tightening -- removed startup banner, update-check code, `quietStartup` gating, replaced `readNearestPackageJson()` with JSON import, replaced `builtinAvailableCommands()` with `BUILTIN_COMMANDS` const, removed dead `toolResultToText()`
+- [x] `markdownEscape` dynamic backtick fence wrapping -- replaced character-level escaping with fence wrapping that auto-adjusts to content
+- [x] Model alias resolution -- `resolveModelPreference()` with tokenized matching, context hints (e.g. `sonnet[3.5]`), non-numeric match requirement
+- [x] Separate `terminal_output` from `terminal_exit` -- two separate emissions on tool end for proper Zed rendering
+- [x] Prompt queueing -- `promptRunning` flag + `pendingMessages` queue, dequeue on turn completion, cancel resolves all pending
+- [x] Exhaustive event handling -- `unreachable()` helper replaces `default: break` in `handlePiEvent`
 
 ## P3 -- MCP Server Wiring
 

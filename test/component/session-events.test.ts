@@ -99,23 +99,6 @@ describe("PiAcpSession event translation", () => {
 		expect(update?.sessionUpdate).toBe("tool_call");
 		expect((update as R)["locations"]).toEqual([{ path: `${process.cwd()}/src/acp/session.ts` }]);
 	});
-
-	test("startup info emits on sendStartupInfoIfPending", async () => {
-		const { session, conn } = createSession();
-		session.setStartupInfo("Welcome!");
-		session.sendStartupInfoIfPending();
-		await tick();
-
-		expect(conn.updates).toHaveLength(1);
-		expect(conn.updates[0]?.update).toEqual({
-			sessionUpdate: "agent_message_chunk",
-			content: { type: "text", text: "Welcome!" },
-		});
-
-		session.sendStartupInfoIfPending();
-		await tick();
-		expect(conn.updates).toHaveLength(1);
-	});
 });
 
 // ---------------------------------------------------------------------------
@@ -185,7 +168,7 @@ describe("tool output formatting (Phase 1)", () => {
 		expect(inner["text"]).toBe("```\ncommand not found\n```");
 	});
 
-	test("read tool markdown-escapes output", async () => {
+	test("read tool wraps output in backtick fence", async () => {
 		const { conn, piSession } = createSession();
 
 		piSession.emit({
@@ -211,7 +194,7 @@ describe("tool output formatting (Phase 1)", () => {
 		expect(Array.isArray(content)).toBe(true);
 		const textBlock = content.find((c) => c["type"] === "content");
 		const inner = textBlock?.["content"] as R;
-		expect(inner["text"]).toBe("\\# Title\n\\[link\\](url)");
+		expect(inner["text"]).toBe("```\n# Title\n[link](url)\n```");
 	});
 });
 
@@ -278,7 +261,7 @@ describe("terminal content lifecycle (Phase 2)", () => {
 		expect(update["content"]).toBeUndefined();
 	});
 
-	test("emits terminal_exit on tool_call_update (end) when terminal supported", async () => {
+	test("emits separate terminal_output then terminal_exit on tool end", async () => {
 		const { conn, piSession } = createSession({ supportsTerminalOutput: true });
 
 		piSession.emit({
@@ -296,18 +279,39 @@ describe("terminal content lifecycle (Phase 2)", () => {
 		} as never);
 		await tick();
 
-		const endUpdate = conn.updates.find(
-			(u) =>
-				u.update.sessionUpdate === "tool_call_update" && (u.update as R)["status"] === "completed",
-		);
-		expect(endUpdate).toBeDefined();
+		// Find the terminal_output notification (emitted before terminal_exit)
+		const outputUpdate = conn.updates.find((u) => {
+			if (u.update.sessionUpdate !== "tool_call_update") return false;
+			const meta = (u.update as R)["_meta"] as R | undefined;
+			return meta?.["terminal_output"] !== undefined;
+		});
+		expect(outputUpdate).toBeDefined();
+		const outputMeta = (outputUpdate?.update as R)["_meta"] as R;
+		expect(outputMeta["terminal_output"]).toEqual({
+			terminal_id: "t1",
+			data: "done",
+		});
+		expect((outputUpdate?.update as R)["status"]).toBe("in_progress");
 
-		const meta = (endUpdate?.update as R)["_meta"] as R;
-		expect(meta["terminal_exit"]).toEqual({
+		// Find the terminal_exit notification (final status)
+		const exitUpdate = conn.updates.find((u) => {
+			if (u.update.sessionUpdate !== "tool_call_update") return false;
+			const meta = (u.update as R)["_meta"] as R | undefined;
+			return meta?.["terminal_exit"] !== undefined;
+		});
+		expect(exitUpdate).toBeDefined();
+		const exitMeta = (exitUpdate?.update as R)["_meta"] as R;
+		expect(exitMeta["terminal_exit"]).toEqual({
 			terminal_id: "t1",
 			exit_code: 0,
 			signal: null,
 		});
+		expect((exitUpdate?.update as R)["status"]).toBe("completed");
+
+		// Verify terminal_output comes before terminal_exit
+		const outputIdx = conn.updates.indexOf(outputUpdate!);
+		const exitIdx = conn.updates.indexOf(exitUpdate!);
+		expect(outputIdx).toBeLessThan(exitIdx);
 	});
 
 	test("falls back to code fences without terminal support", async () => {
@@ -601,5 +605,87 @@ describe("streaming bash formatting (Phase 5)", () => {
 		expect(lastInProgress).toBeDefined();
 		const meta = (lastInProgress?.update as R)["_meta"] as R;
 		expect(meta["piAcp"]).toEqual({ toolName: "read" });
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Phase 7.4: Prompt queueing
+// ---------------------------------------------------------------------------
+
+describe("prompt queueing", () => {
+	test("queued prompt executes after first completes", async () => {
+		const { session, piSession } = createSession();
+
+		// Start first prompt
+		const p1 = session.prompt("first");
+
+		// Queue second prompt while first is running
+		const p2 = session.prompt("second");
+
+		// Complete first turn
+		piSession.emit({
+			type: "message_update",
+			assistantMessageEvent: { type: "text_delta", delta: "response 1" },
+		} as never);
+		piSession.emit({
+			type: "message_end",
+			message: { role: "assistant", content: [], stopReason: "stop" },
+		} as never);
+		piSession.emit({ type: "agent_end" } as never);
+		await tick();
+
+		const r1 = await p1;
+		expect(r1).toBe("end_turn");
+
+		// Second prompt should have been submitted to piSession
+		expect(piSession.prompts).toHaveLength(2);
+		expect(piSession.prompts[0]?.message).toBe("first");
+		expect(piSession.prompts[1]?.message).toBe("second");
+
+		// Complete second turn
+		piSession.emit({
+			type: "message_update",
+			assistantMessageEvent: { type: "text_delta", delta: "response 2" },
+		} as never);
+		piSession.emit({
+			type: "message_end",
+			message: { role: "assistant", content: [], stopReason: "stop" },
+		} as never);
+		piSession.emit({ type: "agent_end" } as never);
+		await tick();
+
+		const r2 = await p2;
+		expect(r2).toBe("end_turn");
+	});
+
+	test("cancel resolves all queued prompts as cancelled", async () => {
+		const { session, piSession } = createSession();
+
+		// Start first prompt
+		const p1 = session.prompt("first");
+
+		// Queue two more
+		const p2 = session.prompt("second");
+		const p3 = session.prompt("third");
+
+		// Cancel
+		await session.cancel();
+
+		// Complete the first turn (which was aborted)
+		piSession.emit({
+			type: "message_end",
+			message: { role: "assistant", content: [], stopReason: "aborted" },
+		} as never);
+		piSession.emit({ type: "agent_end" } as never);
+		await tick();
+
+		const r1 = await p1;
+		expect(r1).toBe("cancelled");
+
+		// Queued prompts should be resolved as cancelled immediately
+		const r2 = await p2;
+		const r3 = await p3;
+		expect(r2).toBe("cancelled");
+		expect(r3).toBe("cancelled");
 	});
 });

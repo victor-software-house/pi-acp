@@ -82,17 +82,3 @@ export function skillCommandsEnabled(cwd: string): boolean {
 
 	return true;
 }
-
-export function quietStartupEnabled(cwd: string): boolean {
-	const settings = resolvedSettings(cwd);
-
-	if (typeof settings.quietStartup === "boolean") {
-		return settings.quietStartup;
-	}
-
-	if (typeof settings.quietStart === "boolean") {
-		return settings.quietStart;
-	}
-
-	return false;
-}

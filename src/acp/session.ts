@@ -14,6 +14,7 @@ import type { AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
 import type { AssistantMessageEvent, ToolCall } from "@mariozechner/pi-ai";
 import type { AgentSession, AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 import { formatToolContent, wrapStreamingBashOutput } from "@pi-acp/acp/translate/tool-content";
+import { unreachable } from "@pi-acp/acp/unreachable";
 import * as z from "zod";
 
 export type StopReason = "end_turn" | "cancelled" | "max_tokens" | "error";
@@ -281,13 +282,19 @@ export class PiAcpSession {
 	readonly piSession: AgentSession;
 	readonly supportsTerminalOutput: boolean;
 
-	private startupInfo: string | null = null;
-	private startupInfoSent = false;
 	private readonly conn: AgentSideConnection;
 
 	private cancelRequested = false;
+	private promptRunning = false;
 	private pendingTurn: { resolve: (r: StopReason) => void; reject: (e: unknown) => void } | null =
 		null;
+	/** Queued prompts waiting for the active turn to complete. */
+	private pendingMessages: Array<{
+		message: string;
+		images: unknown[];
+		resolve: (r: StopReason) => void;
+		reject: (e: unknown) => void;
+	}> = [];
 
 	private currentToolCalls = new Map<string, "pending" | "in_progress">();
 	/** Map of toolCallId -> toolName for streaming updates (Phase 5). */
@@ -312,20 +319,33 @@ export class PiAcpSession {
 		this.piSession.dispose();
 	}
 
-	setStartupInfo(text: string): void {
-		this.startupInfo = text;
-	}
-
-	sendStartupInfoIfPending(): void {
-		if (this.startupInfoSent || this.startupInfo === null) return;
-		this.startupInfoSent = true;
-		this.emit({
-			sessionUpdate: "agent_message_chunk",
-			content: { type: "text", text: this.startupInfo },
-		});
-	}
-
 	async prompt(message: string, images: unknown[] = []): Promise<StopReason> {
+		// If a prompt is already running, queue this one and return a promise
+		// that resolves when it eventually executes.
+		if (this.promptRunning) {
+			return new Promise<StopReason>((resolve, reject) => {
+				this.pendingMessages.push({ message, images, resolve, reject });
+			});
+		}
+
+		return this.executePrompt(message, images);
+	}
+
+	async cancel(): Promise<void> {
+		this.cancelRequested = true;
+
+		// Resolve all queued prompts as cancelled
+		for (const pending of this.pendingMessages) {
+			pending.resolve("cancelled");
+		}
+		this.pendingMessages = [];
+
+		await this.piSession.abort();
+	}
+
+	private executePrompt(message: string, images: unknown[]): Promise<StopReason> {
+		this.promptRunning = true;
+
 		const turnPromise = new Promise<StopReason>((resolve, reject) => {
 			this.cancelRequested = false;
 			this.pendingTurn = { resolve, reject };
@@ -349,9 +369,18 @@ export class PiAcpSession {
 		return turnPromise;
 	}
 
-	async cancel(): Promise<void> {
-		this.cancelRequested = true;
-		await this.piSession.abort();
+	/**
+	 * Dequeue and execute the next pending prompt, if any.
+	 * Called after a turn completes.
+	 */
+	private dequeueNextPrompt(): void {
+		const next = this.pendingMessages.shift();
+		if (next === undefined) {
+			this.promptRunning = false;
+			return;
+		}
+
+		this.executePrompt(next.message, next.images).then(next.resolve, next.reject);
 	}
 
 	wasCancelRequested(): boolean {
@@ -395,6 +424,7 @@ export class PiAcpSession {
 				this.handleAgentEnd();
 				break;
 			default:
+				unreachable(ev, "handlePiEvent");
 				break;
 		}
 	}
@@ -600,19 +630,6 @@ export class PiAcpSession {
 			}
 		}
 
-		// Terminal exit metadata for bash/tmux
-		const terminalExitMeta =
-			this.supportsTerminalOutput && isTerminalTool(toolName)
-				? {
-						terminal_exit: {
-							terminal_id: toolCallId,
-							exit_code: extractExitCode(result),
-							signal: null,
-						},
-					}
-				: undefined;
-		const meta = buildToolMeta(toolName, terminalExitMeta);
-
 		// If no diff content, use formatted tool content
 		if (content === null) {
 			const formatted = formatToolContent(toolName, result, isError);
@@ -626,6 +643,36 @@ export class PiAcpSession {
 				content = [{ type: "content", content: { type: "text", text } }];
 			}
 		}
+
+		// For terminal tools: emit a separate terminal_output update before terminal_exit.
+		// This ensures Zed renders output before the exit status (following claude-agent-acp).
+		if (this.supportsTerminalOutput && isTerminalTool(toolName)) {
+			const outputText = extractStreamingText(result);
+			if (outputText !== "") {
+				this.emit({
+					sessionUpdate: "tool_call_update",
+					toolCallId,
+					status: "in_progress",
+					_meta: buildToolMeta(toolName, {
+						terminal_output: { terminal_id: toolCallId, data: outputText },
+					}),
+					rawOutput: result,
+				});
+			}
+		}
+
+		// Build terminal exit metadata for bash/tmux
+		const terminalExitMeta =
+			this.supportsTerminalOutput && isTerminalTool(toolName)
+				? {
+						terminal_exit: {
+							terminal_id: toolCallId,
+							exit_code: extractExitCode(result),
+							signal: null,
+						},
+					}
+				: undefined;
+		const meta = buildToolMeta(toolName, terminalExitMeta);
 
 		this.emit({
 			sessionUpdate: "tool_call_update",
@@ -650,6 +697,7 @@ export class PiAcpSession {
 			this.lastAssistantStopReason = null;
 			this.pendingTurn?.resolve(reason);
 			this.pendingTurn = null;
+			this.dequeueNextPrompt();
 		});
 	}
 
