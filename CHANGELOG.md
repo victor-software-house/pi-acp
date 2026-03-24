@@ -1,3 +1,10 @@
+# [0.4.0](https://github.com/victor-software-house/pi-acp/compare/v0.3.0...v0.4.0) (2026-03-24)
+
+
+### Features
+
+* reference cleanup, markdown fencing, model aliases, prompt queueing (v0.4.0) ([850aa4e](https://github.com/victor-software-house/pi-acp/commit/850aa4ebb19f72deedda973efdff3539046cf291))
+
 # [0.3.0](https://github.com/victor-software-house/pi-acp/compare/v0.2.0...v0.3.0) (2026-03-23)
 
 
