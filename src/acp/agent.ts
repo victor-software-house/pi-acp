@@ -160,11 +160,17 @@ export class PiAcpAgent implements ACPAgent {
 
 	dispose(): void {
 		this.sessions.disposeAll();
+		void this.daemonContext;
 	}
 
-	constructor(conn: AgentSideConnection, _config?: unknown) {
+	private readonly daemonContext: import("@pi-acp/daemon/context").DaemonContext | undefined;
+
+	constructor(
+		conn: AgentSideConnection,
+		daemonContext?: import("@pi-acp/daemon/context").DaemonContext,
+	) {
 		this.conn = conn;
-		void _config;
+		this.daemonContext = daemonContext;
 	}
 
 	async initialize(params: InitializeRequest): Promise<InitializeResponse> {
