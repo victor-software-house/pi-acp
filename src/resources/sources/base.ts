@@ -27,7 +27,12 @@ export interface ResourceSource {
 	getAgentsFiles(): Array<{ path: string; content: string }>;
 	getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
 	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] };
-	getExtensions(): LoadExtensionsResult;
+	/**
+	 * Optional. VirtualResourceLoader routes `extensions` through the
+	 * designated primary LocalBackend only; remote sources (ssh, http,
+	 * acp-fs) leave this undefined.
+	 */
+	getExtensions?(): LoadExtensionsResult;
 	getSystemPrompt(): string | undefined;
 	getAppendSystemPrompt(): string[];
 }
