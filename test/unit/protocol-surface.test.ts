@@ -49,7 +49,7 @@ describe("protocol surface: initialize", () => {
 		expect(caps.loadSession).toBe(true);
 	});
 
-	test("advertises session capabilities: list, close, resume, fork", async () => {
+	test("advertises session capabilities: list, close, resume, fork, delete", async () => {
 		const { response } = await initAgent();
 		const caps = response.agentCapabilities;
 		if (caps === undefined) throw new Error("agentCapabilities missing");
@@ -59,6 +59,7 @@ describe("protocol surface: initialize", () => {
 		expect(sc.close).toBeDefined();
 		expect(sc.resume).toBeDefined();
 		expect(sc.fork).toBeDefined();
+		expect(sc.delete).toBeDefined();
 	});
 
 	test("advertises prompt capabilities with embeddedContext", async () => {

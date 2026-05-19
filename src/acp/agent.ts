@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import {
 	type Agent as ACPAgent,
@@ -9,6 +9,8 @@ import {
 	type CancelNotification,
 	type CloseSessionRequest,
 	type CloseSessionResponse,
+	type DeleteSessionRequest,
+	type DeleteSessionResponse,
 	type ForkSessionRequest,
 	type ForkSessionResponse,
 	type InitializeRequest,
@@ -447,6 +449,7 @@ export class PiAcpAgent implements ACPAgent {
 					close: {},
 					resume: {},
 					fork: {},
+					delete: {},
 				},
 			},
 		};
@@ -943,6 +946,57 @@ export class PiAcpAgent implements ACPAgent {
 			this.sessions.detach(params.sessionId);
 		}
 		return {};
+	}
+
+	/**
+	 * Deletes a session's on-disk file + releases any live state.
+	 *
+	 * Pi's SessionManager exposes no `delete()` method (verified against
+	 * session-manager.d.ts) — sessions are append-only JSONL files. We
+	 * unlink the file directly via `fs.rmSync`. `resolveSessionFile`
+	 * sources paths from `PiSessionManager.listAll`, so the unlinked path
+	 * is always inside `~/.pi/agent/sessions/...`.
+	 *
+	 * Refuses to delete sessions owned by ANOTHER connection in the daemon
+	 * registry — security boundary: clients may only delete sessions they
+	 * own or sessions that are not currently live. Always releases the
+	 * daemon registry entry first so the live piSession is disposed
+	 * cleanly before the file disappears.
+	 *
+	 * Gated by `sessionCapabilities.delete = {}` (advertised in initialize).
+	 */
+	async unstable_deleteSession(params: DeleteSessionRequest): Promise<DeleteSessionResponse> {
+		const sessionFile = await this.resolveSessionFile(params.sessionId);
+		if (sessionFile === null) {
+			throw RequestError.invalidParams(`Unknown sessionId: ${params.sessionId}`);
+		}
+
+		const live = this.daemonContext?.sessionRegistry.get(params.sessionId);
+		if (live !== undefined && live.ownerConnectionId !== this.connectionId) {
+			throw RequestError.invalidParams(
+				`Session ${params.sessionId} is owned by another connection — cannot delete`,
+			);
+		}
+
+		// Release from daemon registry (if we own it) so disposal cascade
+		// runs cleanly before we unlink the file.
+		if (live !== undefined) {
+			const release = this.releaseFromDaemon(params.sessionId);
+			if (release.disposed) this.sessions.close(params.sessionId);
+		} else if (this.sessions.maybeGet(params.sessionId) !== undefined) {
+			// Live in local manager only (no daemon).
+			this.sessions.close(params.sessionId);
+		}
+
+		try {
+			rmSync(sessionFile, { force: true });
+		} catch (e: unknown) {
+			const msg = e instanceof Error ? e.message : String(e);
+			throw RequestError.internalError({}, `Failed to delete session file: ${msg}`);
+		}
+
+		this.sessionPaths.delete(params.sessionId);
+		return { _meta: { piAcp: { deletedFile: sessionFile } } };
 	}
 
 	async resumeSession(params: ResumeSessionRequest): Promise<ResumeSessionResponse> {
