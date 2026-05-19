@@ -45,14 +45,22 @@ if (argv.includes("--terminal-login")) {
 
 async function runTerminalLogin(): Promise<void> {
 	const { spawnSync } = await import("node:child_process");
-	const cmd = process.env["PI_ACP_PI_COMMAND"] ?? "pi";
-	const res = spawnSync(cmd, [], { stdio: "inherit", env: process.env });
+	const { piCliEntry } = await import("@pi-acp/pi-package");
+
+	// Pi is a regular npm dependency, so we resolve its CLI through
+	// node_modules instead of relying on `pi` being on PATH.
+	const override = process.env["PI_ACP_PI_COMMAND"];
+	const target =
+		override !== undefined
+			? { cmd: override, args: [] }
+			: { cmd: process.execPath, args: [piCliEntry()] };
+
+	const res = spawnSync(target.cmd, target.args, { stdio: "inherit", env: process.env });
 
 	if (res.error && "code" in res.error && res.error.code === "ENOENT") {
 		process.stderr.write(
-			`pi-acp: could not start pi (command not found: ${cmd}). ` +
-				"Install via `npm install -g @earendil-works/pi-coding-agent` " +
-				"or ensure `pi` is on your PATH.\n",
+			`pi-acp: could not start pi (command not found: ${target.cmd}). ` +
+				"Reinstall pi-acp, or set PI_ACP_PI_COMMAND to point at a pi binary.\n",
 		);
 		process.exit(1);
 	}

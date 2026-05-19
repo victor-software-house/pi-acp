@@ -1,7 +1,6 @@
-import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import {
 	type Agent as ACPAgent,
 	type AgentSideConnection,
@@ -66,6 +65,7 @@ import {
 import { extractUserMessageText } from "@pi-acp/acp/translate/pi-messages";
 import { acpPromptToPiMessage } from "@pi-acp/acp/translate/prompt";
 import { formatToolContent } from "@pi-acp/acp/translate/tool-content";
+import { piChangelogPath } from "@pi-acp/pi-package";
 import { VirtualResourceLoader } from "@pi-acp/resources/loader";
 import { LocalBackend } from "@pi-acp/resources/sources/local";
 
@@ -1358,26 +1358,8 @@ function buildCommandList(
 
 function findChangelog(): string | null {
 	try {
-		const which = spawnSync("which", ["pi"], { encoding: "utf-8" });
-		const piPath = String(which.stdout ?? "")
-			.split(/\r?\n/)[0]
-			?.trim();
-		if (piPath !== undefined && piPath !== "") {
-			const resolved = realpathSync(piPath);
-			const pkgRoot = dirname(dirname(resolved));
-			const p = join(pkgRoot, "CHANGELOG.md");
-			if (existsSync(p)) return p;
-		}
+		const p = piChangelogPath();
+		if (existsSync(p)) return p;
 	} catch {}
-
-	try {
-		const npmRoot = spawnSync("npm", ["root", "-g"], { encoding: "utf-8" });
-		const root = String(npmRoot.stdout ?? "").trim();
-		if (root) {
-			const p = join(root, "@mariozechner", "pi-coding-agent", "CHANGELOG.md");
-			if (existsSync(p)) return p;
-		}
-	} catch {}
-
 	return null;
 }
