@@ -69,6 +69,7 @@ import { piChangelogPath } from "@pi-acp/pi-package";
 import { VirtualResourceLoader } from "@pi-acp/resources/loader";
 import { loadManifest, type ManifestDiagnostic } from "@pi-acp/resources/manifest";
 import type { ResourceSource } from "@pi-acp/resources/sources/base";
+import { HttpBackend } from "@pi-acp/resources/sources/http";
 import { LocalBackend } from "@pi-acp/resources/sources/local";
 import { SshBackend } from "@pi-acp/resources/sources/ssh";
 
@@ -226,8 +227,8 @@ export class PiAcpAgent implements ACPAgent {
 	 * least one LocalBackend is present for the extension / theme passthrough.
 	 *
 	 * Phase 5 materializes `kind: "local"`. Phase 6 adds `kind: "ssh"`.
-	 * `http` and `acp-fs` still parse fine but surface as diagnostics until
-	 * their backends land in subsequent phases.
+	 * Phase 7 adds `kind: "http"`. `acp-fs` still parses fine but surfaces as
+	 * a diagnostic until its backend lands in a subsequent phase.
 	 */
 	private async buildResourceLoader(
 		cwd: string,
@@ -256,6 +257,16 @@ export class PiAcpAgent implements ACPAgent {
 				};
 				if (root.user !== undefined) sshOpts.user = root.user;
 				sources.push(new SshBackend(sshOpts));
+				continue;
+			}
+			if (root.kind === "http") {
+				const httpOpts: ConstructorParameters<typeof HttpBackend>[0] = {
+					id: root.id,
+					baseUrl: root.baseUrl,
+					paths: root.paths,
+				};
+				if (root.cache !== undefined) httpOpts.cacheTtlSeconds = root.cache.ttl;
+				sources.push(new HttpBackend(httpOpts));
 				continue;
 			}
 			const diag: ManifestDiagnostic = {

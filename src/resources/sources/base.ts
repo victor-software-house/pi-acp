@@ -20,8 +20,11 @@ export interface ResourceSource {
 	readonly kind: ResourceSourceKind;
 	/**
 	 * Force-refresh the source's view of its underlying storage. For local
-	 * backends this re-walks the filesystem; for remote backends this clears
-	 * the in-memory cache so the next get*() call re-fetches.
+	 * backends this re-walks the filesystem. SSH refetches every declared
+	 * agentsFile unconditionally. HTTP refetches but consults its per-URL
+	 * TTL cache (default 300 s) first — entries within the TTL window are
+	 * reused so repeated session bootstraps skip the network. Set
+	 * `cache.ttl: 0` in the manifest to defeat HTTP caching.
 	 */
 	reload(): Promise<void>;
 	getAgentsFiles(): Array<{ path: string; content: string }>;
