@@ -244,6 +244,22 @@ export class SessionManager {
 		this.sessions.delete(sessionId);
 	}
 
+	/**
+	 * Drop this connection's PiAcpSession wrapper without disposing the
+	 * underlying pi runtime. Used when the daemon SessionRegistry reports
+	 * another client still holds the session.
+	 */
+	detach(sessionId: string): void {
+		const s = this.sessions.get(sessionId);
+		if (!s) return;
+		try {
+			s.unsubscribeOnly();
+		} catch {
+			// best-effort — fall back to full dispose if detach is unsupported
+		}
+		this.sessions.delete(sessionId);
+	}
+
 	closeAllExcept(keepSessionId: string): void {
 		for (const id of this.sessions.keys()) {
 			if (id !== keepSessionId) this.close(id);
@@ -317,6 +333,16 @@ export class PiAcpSession {
 	dispose(): void {
 		this.unsubscribe?.();
 		this.piSession.dispose();
+	}
+
+	/**
+	 * Drop event subscription without disposing the underlying piSession.
+	 * Used when the daemon registry transfers ownership to another connection
+	 * that still holds this session.
+	 */
+	unsubscribeOnly(): void {
+		this.unsubscribe?.();
+		this.unsubscribe = undefined;
 	}
 
 	async prompt(message: string, images: unknown[] = []): Promise<StopReason> {
