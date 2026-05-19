@@ -1,3 +1,10 @@
+# [0.16.0](https://github.com/victor-software-house/pi-acp/compare/v0.15.0...v0.16.0) (2026-05-19)
+
+
+### Features
+
+* **acp:** unstable_listProviders / setProvider / disableProvider + providers capability ([f9b64b4](https://github.com/victor-software-house/pi-acp/commit/f9b64b41a34c025384aea7d7697c1df6c7307c4d))
+
 # [0.15.0](https://github.com/victor-software-house/pi-acp/compare/v0.14.0...v0.15.0) (2026-05-19)
 
 
