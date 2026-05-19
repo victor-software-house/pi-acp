@@ -17,21 +17,35 @@ status: Draft
 
 `pi-acp` v0.5 ran one Node process per ACP client spawn. v0.6 splits that into two roles inside the same bin:
 
-- **Thin client** (default invocation, no flag): connects to per-UID Unix socket / named pipe, forwards stdio in both directions. Auto-spawns daemon if absent.
+- **Thin client** (default invocation, no flag): connects to the per-UID Unix socket under `~/.pi/run/`, forwards stdio in both directions. Auto-spawns daemon if absent. Posix-only.
 - **Daemon** (`--daemon` flag): one process per UID. Holds shared singletons (`SessionRegistry`, `ResourceLoaderPool`, `SshPool`, `HttpCache`, `ManifestCache`). One `AgentSideConnection` + `PiAcpAgent` per accepted socket connection.
 
 The v0.5 binary's `PiAcpAgent` + ACP wiring moves wholesale into the daemon. The new client code is ~50 lines of stdio forwarding + auto-spawn.
 
-`PI_ACP_NO_DAEMON=1` keeps the v0.5 in-process path alive as an escape hatch.
+*(Updated in the v0.6 foundation refactor: the `PI_ACP_NO_DAEMON=1` escape hatch from the v1.0 spec was removed before any v0.6 phase shipped — see PRD-003 §FR-8. Daemon is the only runtime path.)*
 
 ## Guardrails (must not regress)
 
 - v0.5 reactive auth path (PRD-001 FR-4) — unchanged behavior.
 - `--terminal-login` (PRD-001) — never engages daemon.
-- 186 existing tests pass both in daemon mode and `PI_ACP_NO_DAEMON=1` mode.
+- Existing tests pass in daemon mode.
 - ACP wire surface unchanged (NDJSON over stdio from the client's perspective).
 - `bin: pi-acp` shape preserved.
 - Console redirect to stderr (PRD-001 FR-5) applies in both client and daemon modes.
+
+## Mandatory Skill Loads
+
+| Touching | Load before edits |
+|---|---|
+| `src/daemon/control.ts`, `src/client/operator.ts` (Hono control plane) | `hono` |
+| Any subprocess (`Bun.spawn` or `$`) in `src/`, `test/`, `scripts/` | `bun-shell` |
+| Schema work (manifest, control-plane request/response, session state) | `zod`, `typescript-type-safety` |
+| Lint / format failures | `linting-stack` |
+| Pre-push / commit-msg / lefthook | `lefthook-config` |
+| Release / version bumps / publish flow | `greenfield-release` |
+| Tool versions, env, fnox refs | `mise` |
+
+If you start editing a component without the relevant skill in context, stop and load it via `/skill:<name>`. The Implementation Skill References table in PRD-003 §16 is the canonical map.
 
 ## Components
 
@@ -42,12 +56,10 @@ The v0.5 binary's `PiAcpAgent` + ACP wiring moves wholesale into the daemon. The
 **Behavior**:
 
 ```ts
-if (argv.includes("--terminal-login"))      → terminal-login flow (v0.5 unchanged)
+if (argv.includes("--terminal-login"))      → terminal-login flow
 else if (argv.includes("--daemon"))         → daemon main
 else if (argv.includes("--daemon-status"))  → operator: status
 else if (argv.includes("--daemon-stop"))    → operator: shutdown
-else if (env.PI_ACP_NO_DAEMON === "1" ||
-         argv.includes("--no-daemon"))      → in-process v0.5 path (fallback)
 else                                        → thin-client (default)
 ```
 
@@ -70,16 +82,16 @@ else                                        → thin-client (default)
 
 **Key details**:
 
-- `socketPath()`:
-  - Unix: `${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/pi-acp-${UID}.sock` (`UID` from `process.getuid()`).
-  - Windows: `\\.\pipe\pi-acp-${USERNAME}`.
-- `lockfilePath() = socketPath() + ".lock"`.
+- Base dir resolves to `~/.pi/run/` (override via `PI_ACP_SOCKET_DIR` for tests / sandboxing). Posix-only.
+- `socketPath()` → `~/.pi/run/pi-acp.sock` — ACP NDJSON wire.
+- `controlSocketPath()` → `~/.pi/run/pi-acp-control.sock` — Hono HTTP over UDS for operator commands.
+- `lockfilePath()` → `~/.pi/run/pi-acp.lock`.
 - `acquireLock()`:
   - Read PID from lockfile if exists.
-  - `kill -0 PID` → if alive, return `{ heldBy: PID }`; if dead, remove stale lockfile + socket.
+  - `kill -0 PID` → if alive, return `{ heldBy: PID }`; if dead, remove stale lockfile + sockets.
   - Open lockfile with `O_CREAT | O_EXCL | O_WRONLY`. Write own PID. On `EEXIST`, retry stale check once.
 - `releaseLock()` removes lockfile.
-- `removeStaleSocketIfAny()` — used by client on `ECONNREFUSED` if PID-check says no daemon alive.
+- `removeStaleSocketIfAny()` — used by client on `ECONNREFUSED` if PID-check says no daemon alive; cleans both ACP + control sockets.
 
 ### DaemonContext + shared singletons (`src/daemon/context.ts` new)
 
@@ -220,7 +232,7 @@ export async function waitForSocket(path: string, timeoutMs: number): Promise<So
 
 **Purpose**: Receive `DaemonContext` via constructor; use it for shared singletons.
 
-**Phase 1 shape**: Constructor adds optional `daemonContext` parameter. When provided, sessions register/deregister via `daemonContext.sessionRegistry`. When absent (in-process / `PI_ACP_NO_DAEMON=1`), behavior identical to v0.5.
+**Phase 1 shape**: Constructor takes an optional `daemonContext` parameter. The daemon always provides it; when absent (unit-test instantiation), sessions skip registry registration and behave like v0.5.
 
 Future phases (PRD-002) wire `resourceLoaderPool`, `sshPool`, etc.
 
@@ -228,11 +240,11 @@ Future phases (PRD-002) wire `resourceLoaderPool`, `sshPool`, etc.
 
 | Phase | Component | Status | Dependencies | Scope |
 |-------|-----------|--------|--------------|-------|
-| 0 — Docs | PRD-003 + ADR-0010 + this plan + PRD-002 cross-reference update | In flight | None | M |
-| 1 — Daemon skeleton | Mode router, socket transport, auto-spawn, in-process fallback. Daemon hosts vanilla `PiAcpAgent` per connection with empty `DaemonContext`. | Pending | Phase 0 | L |
-| 2 — SessionRegistry + cross-window | `SessionRegistry` + session ownership refcounting + `session/list` union | Pending | Phase 1 | M |
-| 3 — Idle shutdown + operator | `IdleTracker` + `daemon/status` + `daemon/shutdown` | Pending | Phase 1 | M |
-| 4+ — PRD-002 backends | `VirtualResourceLoader`, manifest, SSH, HTTP, ACP-FS, `import_resource`, cwd modes, diagnostics — each plugs into `DaemonContext` | Pending | Phase 3 | Per plan-portable-runtime |
+| 0 — Docs | PRD-003 + ADR-0010 + this plan + PRD-002 cross-reference update | Shipped | None | M |
+| 1 — Daemon skeleton | Mode router, socket transport, auto-spawn. Daemon hosts vanilla `PiAcpAgent` per connection with empty `DaemonContext`. | Shipped | Phase 0 | L |
+| 2 — SessionRegistry + cross-window | `SessionRegistry` + session ownership refcounting + `session/list` union | Shipped | Phase 1 | M |
+| 3 — Idle shutdown + operator | `IdleTracker` + Hono `/status` + `/shutdown` over dedicated control socket | Shipped | Phase 1 | M |
+| 4+ — PRD-002 backends | `VirtualResourceLoader`, manifest, SSH, HTTP, ACP-FS, `import_resource`, cwd modes, diagnostics — each plugs into `DaemonContext` | Phases 4–5 shipped; 6–11 pending | Phase 3 | Per plan-portable-runtime |
 | Final — Release | CHANGELOG, tag v0.6.0 | Pending | All | XS |
 
 Phase 1 is the foundation. Phases 2 and 3 are independent and can land in either order or in parallel. PRD-002 phases follow.
@@ -261,19 +273,17 @@ Phase 1 is the foundation. Phases 2 and 3 are independent and can land in either
    - `tryConnect()`. On miss: `autoSpawnDaemon()` + `waitForSocket(3000)`.
    - Pipe stdio.
 6. `src/index.ts` — mode router:
-   - `--terminal-login` → existing v0.5 flow (unchanged).
+   - `--terminal-login` → existing terminal-login flow.
    - `--daemon` → import `./daemon/index.js`.
-   - `--no-daemon` OR `PI_ACP_NO_DAEMON=1` → existing v0.5 in-process path.
    - Default → `./client/index.js`.
 7. `src/acp/agent.ts` — `PiAcpAgent` constructor accepts optional second arg `daemonContext?: DaemonContext`. Empty default. No behavior change in Phase 1 (Phase 2 wires SessionRegistry).
 8. Tests:
-   - `test/unit/socket-path.test.ts` — path resolution for Unix vs Windows (mock platform).
+   - `test/unit/socket-path.test.ts` — path resolution + `~/.pi/run/` default.
    - `test/component/auto-spawn.test.ts` — first client invocation spawns daemon, completes ACP `initialize`. Uses a tmpdir socket path.
    - `test/component/daemon-lifecycle.test.ts` — `--daemon` spawn, socket file appears, lockfile contains PID, SIGTERM cleans up.
-   - `test/component/no-daemon-mode.test.ts` — `PI_ACP_NO_DAEMON=1` runs full v0.5 path.
 9. Verify pi 0.75.3 concurrent-session safety (Q1 in PRD): spawn two clients against same daemon, each runs `session/new + session/prompt` concurrently with different cwds. Assert no model-registry / auth-storage race.
 
-**Acceptance**: ACP wire surface unchanged from outside. Daemon hosts per-connection `PiAcpAgent`s with empty shared context. Auto-spawn works. `PI_ACP_NO_DAEMON=1` regresses to v0.5 path.
+**Acceptance**: ACP wire surface unchanged from outside. Daemon hosts per-connection `PiAcpAgent`s with empty shared context. Auto-spawn works.
 
 ### Phase 2 — SessionRegistry + cross-window visibility
 
@@ -358,8 +368,8 @@ class ResourceLoaderPool {
 | Stale lockfile after daemon crash | Med | Med | PID-alive check on acquire. Reclaim if dead. |
 | Idle timer fires during slow client connect | Low | Low | New connection cancels timer; connect protocol bounded; if shutdown started, accept-loop closed → client retries auto-spawn. |
 | `--terminal-login` breaks because of mode-router ordering | Low | Low | `--terminal-login` checked FIRST in mode router. Tested explicitly. |
-| Windows named-pipe semantics diverge | Med | Med | Wrap transport; Windows CI lane. Iterate. |
-| `PI_ACP_NO_DAEMON=1` rots over time | Med | Med | CI runs full suite in both modes per push. |
+| ~~Windows named-pipe semantics diverge~~ | — | — | *Rescinded — Windows support dropped in the foundation refactor (Posix-only).* |
+| ~~`PI_ACP_NO_DAEMON=1` rots over time~~ | — | — | *Rescinded — the in-process escape hatch was deleted in the foundation refactor; no second execution path to keep green.* |
 | Crashing `PiAcpAgent` brings down daemon | High | High | Per-connection `uncaughtException` handler; connection-scoped try/catch boundaries. |
 | One client floods socket with frames, blocking other clients | Low | Med | Backpressure: per-connection write queue with high-watermark; close offending connection. |
 
@@ -368,7 +378,7 @@ class ResourceLoaderPool {
 - Q1 (PRD-003): Pi `0.75.3` concurrent session safety. Resolve in Phase 1 via gate test.
 - Q2 (PRD-003): Idle timeout default 600s — verify with real-world telemetry post-release.
 - Q3 (PRD-003): Per-connection vs user-level session ownership. Connection-level for v0.6.
-- Q4 (PRD-003): Windows named-pipe lockfile approach. Phase 1.
+- ~~Q4 (PRD-003): Windows named-pipe lockfile approach.~~ Closed v1.1 — Windows dropped (Posix-only).
 - Q5 (PRD-003): Crash isolation — connection only, sessions remain in registry.
 - Q6 (PRD-003): `--daemon-status` output format. JSON default + `--text` opt-in.
 - Q7 (PRD-003): Daemon debug log destination. Stderr.

@@ -40,7 +40,7 @@ The question: how to keep the spawn surface intact (Zed still launches `pi-acp` 
 - PRD-002 SSH / HTTP / manifest caches only pay off if shared.
 - No client-side config changes (Zed `agent_servers` entries stay identical).
 - `--terminal-login` must continue to work — pi's interactive auth flow is not daemonizable.
-- Insurance: must remain possible to run v0.5 in-process mode if the daemon misbehaves.
+- ~~Insurance: must remain possible to run v0.5 in-process mode if the daemon misbehaves.~~ *(Reversed during the foundation refactor — see "Update v1.1" below.)*
 
 ## Considered Options
 
@@ -80,17 +80,24 @@ The question: how to keep the spawn surface intact (Zed still launches `pi-acp` 
 
 Chosen option: **Option 3 — long-running daemon + thin-client binary**.
 
-Concrete shape:
+Concrete shape (current — see "Update v1.1" below for the post-refactor refinements):
 
-- One daemon per UID. Socket at `${XDG_RUNTIME_DIR:-/tmp}/pi-acp-${UID}.sock` (Unix) or `\\.\pipe\pi-acp-${USERNAME}` (Windows).
-- `pi-acp` with no flag = thin client. Tries to connect to socket; on failure, auto-spawns `pi-acp --daemon` detached, polls for socket, connects. Pipes stdio in both directions.
+- One daemon per UID. Sockets under `~/.pi/run/` (default; overridable via `PI_ACP_SOCKET_DIR`): `pi-acp.sock` for ACP NDJSON, `pi-acp-control.sock` for the Hono control plane, `pi-acp.lock` for the PID lockfile. Posix-only — Windows is unsupported.
+- `pi-acp` with no flag = thin client. Tries to connect to the ACP socket; on failure, auto-spawns `pi-acp --daemon` detached, polls for socket, connects. Pipes stdio in both directions.
 - `pi-acp --daemon` = the orchestrator. Holds `SessionRegistry`, `ResourceLoaderPool`, `SshPool`, `HttpCache`, `ManifestCache` as daemon-level singletons. Spawns one `AgentSideConnection` + `PiAcpAgent` per accepted socket connection, injecting the shared context.
-- `pi-acp --terminal-login` = unchanged from v0.5. Spawns pi directly in foreground. Never touches the daemon.
-- `pi-acp --daemon-status` / `--daemon-stop` = operator commands. Speak in-band on the socket via `daemon/status` / `daemon/shutdown` methods (namespaced to avoid ACP collision).
-- `PI_ACP_NO_DAEMON=1` (or `--no-daemon` CLI flag) = escape hatch. Runs in-process v0.5 path, no socket activity. Stays functional as a regression-safety fallback indefinitely; CI runs full test suite in both modes.
+- `pi-acp --terminal-login` = unchanged. Spawns pi directly in foreground. Never touches the daemon.
+- `pi-acp --daemon-status` / `--daemon-stop` = operator commands. Speak HTTP over the dedicated control socket using a Hono app (`GET /status`, `POST /shutdown`, `GET /sessions`). Operator client uses `Bun.fetch` with the unix-socket option.
 - Idle shutdown: daemon tracks active connection count. On count → 0, starts timer (`PI_ACP_DAEMON_IDLE_SECONDS`, default 600s). Timer fire → graceful shutdown. New connection cancels timer.
 - Cross-window visibility: `session/list` returns union of sessions across all connected clients of the daemon, plus disk-persisted sessions. Each result carries `_meta.piAcp.ownedByThisConnection`.
 - Crash isolation: per-connection `uncaughtException` handler — connection closes, daemon survives.
+
+### Update v1.1 (foundation refactor, 2026-05-19)
+
+Three v1.0 decisions reversed before any v0.6 phase shipped:
+
+1. **No in-process escape hatch.** `PI_ACP_NO_DAEMON=1` / `--no-daemon` and `runtime/in-process.ts` were deleted. The "insurance" argument didn't survive — a daemon bug would also be hit by the in-process path since both share `PiAcpAgent`, so the second path was test-surface burden without a real recovery story.
+2. **Operator commands on a dedicated control socket.** v1.0 had operator methods (`daemon/status`, `daemon/shutdown`) sniffed in-band on the ACP socket via first-frame peeking + `socket.unshift`. v1.1 splits them onto `~/.pi/run/pi-acp-control.sock` and serves them via Hono HTTP over UDS. The ACP socket is pure ACP — no peek, no unshift dance. Trivially debuggable: `curl --unix-socket ~/.pi/run/pi-acp-control.sock http://x/status`.
+3. **Posix-only.** Windows named-pipe support was speculative and untested. Removed along with `process.platform === "win32"` branches across the codebase.
 
 ## Consequences
 
@@ -106,9 +113,7 @@ Concrete shape:
 
 - Architectural complexity: socket transport, lockfile, auto-spawn, idle shutdown, crash isolation. Each is a tested component.
 - Pi 0.69 concurrent-session safety not yet verified. Phase 1 integration test gates this; if unsafe, daemon falls back to one-`AgentSession`-per-process (one daemon spawns sub-processes per session).
-- `PI_ACP_NO_DAEMON=1` is a second supported execution path — must stay green in CI alongside daemon mode. Doubles test surface for some integration tests.
 - Stale socket / lockfile handling adds edge-case logic that gets exercised rarely; bugs there surface only on user-machine crashes.
-- Windows named-pipe semantics differ enough from Unix sockets to warrant a Windows-CI lane.
 
 ### Neutral
 
@@ -121,3 +126,4 @@ Concrete shape:
 - **PRD**: `docs/prd/PRD-003-runtime-daemon.md`.
 - **Plan**: `docs/architecture/plan-runtime-daemon.md`.
 - **ADRs**: ADR-0001 (standalone server — daemon is the same bin, dispatched differently); ADR-0006..0009 (PRD-002 backends — beneficiaries of daemon's shared singletons).
+- **Implementation skills** (`~/.agents/skills/` chezmoi-managed): `hono` (control plane), `bun-shell` (subprocess + tmpdir), `zod` + `typescript-type-safety` (schemas), `linting-stack`, `lefthook-config`, `greenfield-release`, `mise`. Canonical FR → skill mapping in PRD-003 §16. Skip them = process failure.

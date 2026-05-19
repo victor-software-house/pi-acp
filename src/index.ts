@@ -1,9 +1,9 @@
 /**
- * pi-acp entry point. Dispatches between four modes:
+ * pi-acp entry point. Dispatches between modes:
  *
- *   --terminal-login                    → foreground pi for interactive auth (v0.5 flow)
+ *   --terminal-login                    → foreground pi for interactive auth
  *   --daemon                            → long-running orchestrator (PRD-003)
- *   --no-daemon | PI_ACP_NO_DAEMON=1    → v0.5 in-process server (escape hatch)
+ *   --daemon-status / --daemon-stop     → operator commands
  *   (default)                           → thin client; auto-spawns daemon
  *
  * ACP transports JSON-RPC NDJSON over stdout. Any stray byte poisons the
@@ -11,7 +11,7 @@
  * so transitive deps (or our own debug prints) can't corrupt it.
  */
 
-import { platform } from "node:os";
+export {};
 
 {
 	const toStderr = (...args: unknown[]): void => {
@@ -38,9 +38,6 @@ if (argv.includes("--terminal-login")) {
 } else if (argv.includes("--daemon-stop")) {
 	const { runDaemonStop } = await import("@pi-acp/client/operator");
 	await runDaemonStop();
-} else if (argv.includes("--no-daemon") || process.env["PI_ACP_NO_DAEMON"] === "1") {
-	const { runInProcess } = await import("@pi-acp/runtime/in-process");
-	runInProcess();
 } else {
 	const { runClient } = await import("@pi-acp/client/index");
 	await runClient();
@@ -48,15 +45,22 @@ if (argv.includes("--terminal-login")) {
 
 async function runTerminalLogin(): Promise<void> {
 	const { spawnSync } = await import("node:child_process");
-	const isWindows = platform() === "win32";
-	const cmd = process.env["PI_ACP_PI_COMMAND"] ?? (isWindows ? "pi.cmd" : "pi");
-	const res = spawnSync(cmd, [], { stdio: "inherit", env: process.env });
+	const { piCliEntry } = await import("@pi-acp/pi-package");
+
+	// Pi is a regular npm dependency, so we resolve its CLI through
+	// node_modules instead of relying on `pi` being on PATH.
+	const override = process.env["PI_ACP_PI_COMMAND"];
+	const target =
+		override !== undefined
+			? { cmd: override, args: [] }
+			: { cmd: process.execPath, args: [piCliEntry()] };
+
+	const res = spawnSync(target.cmd, target.args, { stdio: "inherit", env: process.env });
 
 	if (res.error && "code" in res.error && res.error.code === "ENOENT") {
 		process.stderr.write(
-			`pi-acp: could not start pi (command not found: ${cmd}). ` +
-				"Install via `npm install -g @earendil-works/pi-coding-agent` " +
-				"or ensure `pi` is on your PATH.\n",
+			`pi-acp: could not start pi (command not found: ${target.cmd}). ` +
+				"Reinstall pi-acp, or set PI_ACP_PI_COMMAND to point at a pi binary.\n",
 		);
 		process.exit(1);
 	}

@@ -43,6 +43,21 @@ Plus two surface features:
 - `bin: pi-acp`, `--terminal-login`, semantic-release pipeline untouched.
 - No fork of `@earendil-works/pi-coding-agent`.
 
+## Mandatory Skill Loads
+
+| Phase / file | Load before edits |
+|---|---|
+| Phase 2 (`src/resources/manifest.ts`, `manifest.schema.ts`) | `zod`, `typescript-type-safety` |
+| Phase 3 (`src/resources/sources/ssh.ts`) | `bun-shell` (uv-shebanged Python under `scripts/` only for non-runtime helpers) |
+| Phase 4 (`src/resources/sources/http.ts`) | `typescript-type-safety` (Bun.fetch + Zod response shapes) |
+| Phase 5 (`src/resources/sources/acp-fs.ts`, `src/resources/tools/acp-read.ts`) | `pi-tool-progressive-disclosure`, `pi-extension-writing` |
+| Phase 6 (`src/resources/tools/import-resource.ts`) | `pi-tool-progressive-disclosure`, `pi-extension-writing` |
+| Phase 7 (`src/resources/modes.ts` tmpdir lifecycle) | `bun-shell` (`$\`mktemp -d …\``) |
+| Phase 8 (diagnostics surface) | `pi-rendering-style`, `pi-footer-status` |
+| Any phase (lint / pre-push / release) | `linting-stack`, `lefthook-config`, `greenfield-release` |
+
+The full mapping (FR → skill, with rationale) lives in PRD-002 §16.
+
 ## Components
 
 ### `VirtualResourceLoader` (new — `src/resources/loader.ts`)
@@ -67,7 +82,7 @@ Plus two surface features:
 - `base.ts` — shared `ResourceSource` interface + helpers (path normalization, skill parsing, prompt frontmatter parsing).
 - `local.ts` — `LocalBackend`. Wraps pi's `loadProjectContextFiles`, `loadSkills`, `loadSkillsFromDir` for one root. No remote calls.
 - `acp-fs.ts` — `AcpFsBackend`. Reads via `connection.fs.readTextFile`. Listing relies on manifest-declared file lists (ACP has no `fs/listDir`).
-- `ssh.ts` — `SshBackend`. `child_process.spawn("ssh", ...)` for reads (`ssh user@host cat path`) and listings (`ssh user@host find path -maxdepth 1 -type f`). Per-operation 5s timeout. Inherits user's `~/.ssh/config`.
+- `ssh.ts` — `SshBackend`. Shipped Phase 6 as a single Bun Shell `$` line: `${sshCommand} -o BatchMode=yes -o ConnectTimeout=${sec} -o ServerAliveInterval=2 -o ServerAliveCountMax=${alive} ${target} -- cat ${path}`. ssh self-terminates via its own options — no caller-side wrapper, no perl alarm, no `timeout(1)`. Operator's `~/.ssh/config` (`ControlMaster auto`, `ControlPersist 10m`) handles spawn-cost amortization for free. `ShellPromise` has no `.timeout()` (verified at runtime against bun 1.3.14); ssh's options are the correct layer. Scope: AGENTS files via explicit `paths.agentsFiles` list; skills/prompts/extensions over SSH stay deferred and surface one diagnostic each. *(Skill: `bun-shell` mandatory before edits here.)*
 - `http.ts` — `HttpBackend`. HTTPS-only `fetch`. Per-source `cache.ttl` (default 300s, in-memory).
 
 **ADR Reference**: ADR-0007 (delegation gate for `acp-fs`).
@@ -78,7 +93,7 @@ Plus two surface features:
 
 **Key details**:
 
-- Zod schema in `manifest.schema.ts`. Validates `version: 1`, `mode`, each `root`'s shape per `kind`, `mergeStrategy`, optional `auto-import` and `diagnostics`.
+- Zod schema in `manifest.schema.ts`. Validates `version: 1`, `mode`, each `root`'s shape per `kind`, `mergeStrategy`, optional `auto-import` and `diagnostics`. *(Skills: `zod` + `typescript-type-safety` mandatory. `import * as z from 'zod'` namespace; `safeParse` only; `z.enum` for `mode`/`mergeStrategy`; discriminated union on `root.kind` for O(1) validation.)*
 - Cascade resolver in `manifest.ts`:
   1. ACP session params (`params._meta.piAcp.manifest` — full inline manifest or path).
   2. Project (`<cwd>/.pi-acp.yaml`).
@@ -100,6 +115,8 @@ Plus two surface features:
 
 Both registered via `createAgentSession({ customTools })`. `read` delegation also passes `tools: ["bash", "edit", "write", "grep", "find", "ls"]` to disable pi's built-in `read`.
 
+*(Skills: `pi-tool-progressive-disclosure` mandatory for both files. Use `StringEnum` over `anyOf`/`oneOf`; keep `promptSnippet` minimal; gate `import_resource` activation via `setActiveTools()` so it stays out of the model-visible set when no non-local source is configured. `pi-extension-writing` references `custom-tools-and-tool-overrides.md` for the override contract.)*
+
 **ADR Reference**: ADR-0007 (`acp-read`), no ADR for `import_resource` (mechanical extension of FR-4).
 
 ### Cwd modes (new — `src/resources/modes.ts`)
@@ -109,7 +126,7 @@ Both registered via `createAgentSession({ customTools })`. `read` delegation als
 **Key details**:
 
 - `resolveMode(manifest, params)` returns the effective mode after cascade.
-- `createTmpdirCwd(sessionId)` for `none` mode — creates `os.tmpdir() + "/pi-acp-session-<id>/"` with mode `0700`.
+- `createTmpdirCwd(sessionId)` for `none` mode — creates `os.tmpdir() + "/pi-acp-session-<id>/"` with mode `0700`. Implementation prefers `await $\`mktemp -d ${tmpRoot}/pi-acp-session-${sessionId}-XXXXXX\`.text()` (skill: `bun-shell`).
 - Cleanup hooks bound to `session/close`, `AgentSideConnection.closed`, and SIGINT/SIGTERM (reuses existing `shuttingDown` guard from v0.5).
 - `overlay` mode is the manifest's responsibility — `modes.ts` just confirms the primary cwd is valid; aux roots are resolved by the loader.
 
@@ -146,19 +163,21 @@ Both registered via `createAgentSession({ customTools })`. `read` delegation als
 
 ## Implementation Order
 
+Numbering aligns with the combined PRD-002 + PRD-003 phase sequence shipped on the v0.6 train. Phases 1–3 belong to PRD-003 (daemon foundation); this plan covers Phases 4 onward.
+
 | Phase | Component | Dependencies | Estimated Scope |
 |-------|-----------|--------------|-----------------|
-| 0 — Docs | PRD-002 + ADR-0006..0009 + this plan | None | M (in flight) |
-| 1 — Loader skeleton | `VirtualResourceLoader` + `LocalBackend` only | Phase 0 | M |
-| 2 — Manifest | Cascade resolver + Zod schema + YAML parser dep | Phase 1 | M |
-| 3 — SSH backend | `SshBackend` + tests against fake-ssh fixture | Phase 1 | M |
-| 4 — HTTP backend | `HttpBackend` + tests with fixture HTTPS server | Phase 1 | S |
-| 5 — ACP-FS backend + read delegation | `AcpFsBackend` + `acp_read` custom tool + capability gate | Phase 1 | M |
-| 6 — `import_resource` tool | Custom tool + `extendResources` wiring | Phases 1, 2 | M |
-| 7 — Cwd modes | `overlay` + `none` mode handlers + tmpdir lifecycle | Phases 1, 2 | M |
-| 8 — Diagnostics + release | Diagnostic surface, README, CHANGELOG, tag v0.6.0 | All prior | S |
+| 0 — Docs | PRD-002 + ADR-0006..0009 + this plan | None | M (shipped) |
+| 4 — Loader skeleton | `VirtualResourceLoader` + `LocalBackend` only | Phase 0 | M (shipped) |
+| 5 — Manifest | Cascade resolver + Zod schema + YAML parser dep | Phase 4 | M (shipped) |
+| 6 — SSH backend | `SshBackend` + tests against fake-ssh fixture | Phase 4 | M (shipped) |
+| 7 — HTTP backend | `HttpBackend` + tests with fixture HTTPS server | Phase 4 | S |
+| 8 — ACP-FS backend + read delegation | `AcpFsBackend` + `acp_read` custom tool + capability gate | Phase 4 | M |
+| 9 — `import_resource` tool | Custom tool + `extendResources` wiring | Phases 4, 5 | M |
+| 10 — Cwd modes | `overlay` + `none` mode handlers + tmpdir lifecycle | Phases 4, 5 | M |
+| 11 — Diagnostics + release | Diagnostic surface, README, CHANGELOG, tag v0.6.0 | All prior | S |
 
-Phases 3–4 can swap order. Phase 5 depends on Phase 1+2. Phase 6 depends on Phase 1+2.
+Phases 6–7 can swap order. Phase 8 depends on Phases 4+5. Phase 9 depends on Phases 4+5.
 
 ## Phase Detail
 
@@ -199,19 +218,31 @@ Phases 3–4 can swap order. Phase 5 depends on Phase 1+2. Phase 6 depends on Ph
 
 **Acceptance**: Manifests at all three cascade levels are correctly resolved. Multiple `local` sources can coexist and contribute resources. Tests pass.
 
-### Phase 3 — SSH backend
+### Phase 6 — SSH backend *(shipped)*
 
-1. `src/resources/sources/ssh.ts` — `SshBackend`. Spawn `ssh` subprocess via `child_process.spawn`. Hard 5s timeout per op.
-2. List operations: `ssh <conn> find <path> -maxdepth 1 -type f -printf '%f\\n'`.
-3. Read operations: `ssh <conn> cat <path>`.
-4. Skill loading: ls the skill dir, then read `SKILL.md` + sibling files per skill.
-5. Tests in `test/unit/resources/sources-ssh.test.ts`:
-   - Fake ssh fixture (mock `child_process.spawn` via dependency injection).
-   - Timeout path produces diagnostic.
-   - Successful read returns content.
-   - Listing returns expected file names.
+> *Originally tracked here as "Phase 3"; renumbered to Phase 6 in §Implementation Order to align with PRD-003's daemon-foundation phase numbering.*
 
-**Acceptance**: SSH source can contribute skills, prompts, and AGENTS files. Failure modes (timeout, non-zero exit, missing path) surface as diagnostics, not exceptions.
+1. `src/resources/sources/ssh.ts` — `SshBackend.cat` is one Bun Shell `$` line:
+
+   ```ts
+   await $`${sshCommand} -o BatchMode=yes -o ConnectTimeout=${sec} -o ServerAliveInterval=2 -o ServerAliveCountMax=${alive} ${target} -- cat ${path}`.quiet().nothrow();
+   ```
+
+   Timeout enforcement lives at the ssh-protocol layer: `ConnectTimeout=N` bounds TCP + handshake; `ServerAliveInterval=2 -o ServerAliveCountMax=N` bound post-auth silence on a stalled remote. ssh self-terminates without any caller-side wrapper. `ShellPromise` has no `.timeout()` (verified at runtime against bun 1.3.14 — only `cwd/env/quiet/nothrow/throws/text/json/lines/arrayBuffer/bytes/blob/run/then`); ssh's own options are the right layer. Operator's `~/.ssh/config` (`ControlMaster auto`, `ControlPersist 10m`) amortizes spawn cost from ~70ms cold to ~5ms warm on the same host within 10 minutes. Interpolations are auto-escaped by Bun Shell.
+2. No helper script in `scripts/` — earlier iterations of this phase used a uv-shebanged Python helper and then an inline perl alarm; both removed once ssh's own ServerAlive options proved sufficient for the realistic stall modes.
+3. **Scope**: AGENTS files via explicit `paths.agentsFiles` list only. Skills, prompts, and extensions over SSH stay deferred (no remote `find` discovery in this phase); declaring `paths.skills` / `.prompts` / `.extensions` surfaces one `"not yet implemented"` diagnostic per kind via `getSkills()` aggregation.
+4. `sshCommand?` constructor option threads through to the Python helper's `--ssh` arg so tests can point at an absolute-path Bash shim. Bun Shell `$` (and `Bun.spawn`) do NOT honor runtime `process.env.PATH` mutations for argv[0] resolution — verified empirically — so an explicit override is the portable test path.
+5. `ResourceSource.getExtensions` was made optional in this phase; `VirtualResourceLoader` routes extensions through the primary `LocalBackend` only.
+6. Manifest roots with `kind: "ssh"` materialize into `SshBackend` instances in `PiAcpAgent.buildResourceLoader`.
+7. Tests in `test/unit/ssh-backend.test.ts` (6 cases):
+   - cat round-trip + ssh:// path qualification (shim shadows ssh, helper reads it).
+   - Non-zero ssh exit surfaces as warning diagnostic without throwing.
+   - Unsupported-kind diagnostics when `paths.skills` / `.prompts` / `.extensions` declared.
+   - Argv assertion: the shim records the full argv; tests verify the expected `-o ConnectTimeout` / `-o ServerAliveInterval` / `-o ServerAliveCountMax` options reach ssh.
+   - Default getters return empty when no agentsFiles declared.
+8. End-to-end verified against real ssh to `127.0.0.1`: ~70ms round-trip, exit 255 / "Host key verification failed." stderr forwarded cleanly.
+
+**Acceptance**: SSH source contributes AGENTS files from a remote host. Failure modes (timeout, non-zero exit, missing path) surface as diagnostics, not exceptions. **Shipped on `feat/v0.6-foundation-refactor` (commits `2cdc385`, `b13ddde`, `5869a40`, `c610bb5`).**
 
 ### Phase 4 — HTTP backend
 

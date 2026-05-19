@@ -1,7 +1,6 @@
-import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import {
 	type Agent as ACPAgent,
 	type AgentSideConnection,
@@ -66,8 +65,12 @@ import {
 import { extractUserMessageText } from "@pi-acp/acp/translate/pi-messages";
 import { acpPromptToPiMessage } from "@pi-acp/acp/translate/prompt";
 import { formatToolContent } from "@pi-acp/acp/translate/tool-content";
+import { piChangelogPath } from "@pi-acp/pi-package";
 import { VirtualResourceLoader } from "@pi-acp/resources/loader";
+import { loadManifest, type ManifestDiagnostic } from "@pi-acp/resources/manifest";
+import type { ResourceSource } from "@pi-acp/resources/sources/base";
 import { LocalBackend } from "@pi-acp/resources/sources/local";
+import { SshBackend } from "@pi-acp/resources/sources/ssh";
 
 import pkgJson from "../../package.json" with { type: "json" };
 
@@ -217,16 +220,75 @@ export class PiAcpAgent implements ACPAgent {
 	}
 
 	/**
-	 * Build a VirtualResourceLoader for a new pi session. Phase 4 ships a
-	 * single LocalBackend (cwd + agentDir), which yields identical behavior
-	 * to v0.5's bare createAgentSession({ cwd }). Phase 5+ extends this from
-	 * a manifest cascade.
+	 * Build a VirtualResourceLoader for a new pi session. Reads the
+	 * `.pi-acp.yaml` manifest cascade (ACP params > project > user-global >
+	 * default), turns each declared root into a ResourceSource, and ensures at
+	 * least one LocalBackend is present for the extension / theme passthrough.
+	 *
+	 * Phase 5 materializes `kind: "local"`. Phase 6 adds `kind: "ssh"`.
+	 * `http` and `acp-fs` still parse fine but surface as diagnostics until
+	 * their backends land in subsequent phases.
 	 */
-	private async buildResourceLoader(cwd: string): Promise<VirtualResourceLoader> {
-		const agentDir = getAgentDir();
-		const local = new LocalBackend({ cwd, agentDir });
-		const loader = new VirtualResourceLoader({ sources: [local] });
+	private async buildResourceLoader(
+		cwd: string,
+		sessionParams?: unknown,
+	): Promise<VirtualResourceLoader> {
+		const loaded = await loadManifest({ cwd, sessionParams });
+		const diagnostics: ManifestDiagnostic[] = [...loaded.diagnostics];
+		const sources: ResourceSource[] = [];
+
+		for (const root of loaded.manifest.roots) {
+			if (root.kind === "local") {
+				sources.push(
+					new LocalBackend({
+						id: root.id,
+						cwd: root.paths.cwd ?? cwd,
+						agentDir: root.paths.agentDir ?? getAgentDir(),
+					}),
+				);
+				continue;
+			}
+			if (root.kind === "ssh") {
+				const sshOpts: ConstructorParameters<typeof SshBackend>[0] = {
+					id: root.id,
+					host: root.host,
+					paths: root.paths,
+				};
+				if (root.user !== undefined) sshOpts.user = root.user;
+				sources.push(new SshBackend(sshOpts));
+				continue;
+			}
+			const diag: ManifestDiagnostic = {
+				source: loaded.source,
+				message: `root "${root.id}" kind="${root.kind}" not yet supported in this build (skipped)`,
+			};
+			if (loaded.path !== undefined) diag.path = loaded.path;
+			diagnostics.push(diag);
+		}
+
+		// VirtualResourceLoader needs at least one LocalBackend for extensions
+		// + themes. Synthesize one from the session cwd if the manifest didn't
+		// already declare one.
+		if (!sources.some((s) => s.kind === "local")) {
+			sources.unshift(new LocalBackend({ cwd, agentDir: getAgentDir() }));
+		}
+
+		const loader = new VirtualResourceLoader({
+			sources,
+			mergeStrategy: loaded.manifest.mergeStrategy,
+		});
 		await loader.reload();
+
+		// Phase 11 will surface these via session/update. Until then, log
+		// them to stderr under the daemon-debug flag so a malformed manifest
+		// doesn't fail silently.
+		// biome-ignore lint/complexity/useLiteralKeys: env var keys need bracket access for tsc strict mode
+		if (diagnostics.length > 0 && process.env["PI_ACP_DAEMON_DEBUG"] === "1") {
+			for (const d of diagnostics) {
+				const where = d.path !== undefined ? ` ${d.path}` : "";
+				process.stderr.write(`pi-acp manifest [${d.source}${where}]: ${d.message}\n`);
+			}
+		}
 		return loader;
 	}
 
@@ -271,7 +333,7 @@ export class PiAcpAgent implements ACPAgent {
 
 		let result: CreateAgentSessionResult;
 		try {
-			const resourceLoader = await this.buildResourceLoader(params.cwd);
+			const resourceLoader = await this.buildResourceLoader(params.cwd, params);
 			result = await createAgentSession({ cwd: params.cwd, resourceLoader });
 		} catch (e: unknown) {
 			const authErr = detectAuthError(e);
@@ -620,7 +682,7 @@ export class PiAcpAgent implements ACPAgent {
 		let result: CreateAgentSessionResult;
 		try {
 			const sm = PiSessionManager.open(sessionFile);
-			const resourceLoader = await this.buildResourceLoader(params.cwd);
+			const resourceLoader = await this.buildResourceLoader(params.cwd, params);
 			result = await createAgentSession({
 				cwd: params.cwd,
 				sessionManager: sm,
@@ -761,7 +823,7 @@ export class PiAcpAgent implements ACPAgent {
 		let result: CreateAgentSessionResult;
 		try {
 			const sm = PiSessionManager.open(sessionFile);
-			const resourceLoader = await this.buildResourceLoader(params.cwd);
+			const resourceLoader = await this.buildResourceLoader(params.cwd, params);
 			result = await createAgentSession({
 				cwd: params.cwd,
 				sessionManager: sm,
@@ -832,7 +894,7 @@ export class PiAcpAgent implements ACPAgent {
 		let result: CreateAgentSessionResult;
 		try {
 			const sm = PiSessionManager.forkFrom(sourceFile, params.cwd);
-			const resourceLoader = await this.buildResourceLoader(params.cwd);
+			const resourceLoader = await this.buildResourceLoader(params.cwd, params);
 			result = await createAgentSession({
 				cwd: params.cwd,
 				sessionManager: sm,
@@ -1358,27 +1420,8 @@ function buildCommandList(
 
 function findChangelog(): string | null {
 	try {
-		const whichCmd = process.platform === "win32" ? "where" : "which";
-		const which = spawnSync(whichCmd, ["pi"], { encoding: "utf-8" });
-		const piPath = String(which.stdout ?? "")
-			.split(/\r?\n/)[0]
-			?.trim();
-		if (piPath !== undefined && piPath !== "") {
-			const resolved = realpathSync(piPath);
-			const pkgRoot = dirname(dirname(resolved));
-			const p = join(pkgRoot, "CHANGELOG.md");
-			if (existsSync(p)) return p;
-		}
+		const p = piChangelogPath();
+		if (existsSync(p)) return p;
 	} catch {}
-
-	try {
-		const npmRoot = spawnSync("npm", ["root", "-g"], { encoding: "utf-8" });
-		const root = String(npmRoot.stdout ?? "").trim();
-		if (root) {
-			const p = join(root, "@mariozechner", "pi-coding-agent", "CHANGELOG.md");
-			if (existsSync(p)) return p;
-		}
-	} catch {}
-
 	return null;
 }

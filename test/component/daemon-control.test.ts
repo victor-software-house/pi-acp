@@ -15,9 +15,9 @@ interface TestEnv {
 
 function setupEnv(): TestEnv {
 	const dir = mkdtempSync(join(tmpdir(), "pi-acp-control-test-"));
-	const uid = typeof process.getuid === "function" ? process.getuid() : 0;
-	const sock = join(dir, `pi-acp-${uid}.sock`);
-	return { socketDir: dir, socketPath: sock, lockfilePath: `${sock}.lock` };
+	const sock = join(dir, "pi-acp.sock");
+	const lock = join(dir, "pi-acp.lock");
+	return { socketDir: dir, socketPath: sock, lockfilePath: lock };
 }
 
 function teardownEnv(env: TestEnv): void {
@@ -74,12 +74,18 @@ describe("daemon control commands", () => {
 			env: { ...process.env, PI_ACP_SOCKET_DIR: env.socketDir },
 		});
 		expect(res.status).toBe(0);
-		const parsed: unknown = JSON.parse(res.stdout.toString());
-		const result = (parsed as { result: { pid: number; uptimeSeconds: number; version: string } })
-			.result;
-		expect(result.pid).toBe(daemon.pid ?? -1);
-		expect(typeof result.uptimeSeconds).toBe("number");
-		expect(typeof result.version).toBe("string");
+		const parsed = JSON.parse(res.stdout.toString()) as {
+			pid: number;
+			uptimeSeconds: number;
+			version: string;
+			connections: number;
+			sessions: number;
+		};
+		expect(parsed.pid).toBe(daemon.pid ?? -1);
+		expect(typeof parsed.uptimeSeconds).toBe("number");
+		expect(typeof parsed.version).toBe("string");
+		expect(typeof parsed.connections).toBe("number");
+		expect(typeof parsed.sessions).toBe("number");
 	});
 
 	test("--daemon-stop with running daemon triggers shutdown", async () => {

@@ -3,25 +3,25 @@
  *
  * Lifecycle:
  *   1. Acquire per-UID lockfile (refuses if another daemon alive).
- *   2. Remove stale socket file if any (left by a dead prior daemon).
+ *   2. Remove stale socket files left by a dead prior daemon.
  *   3. Construct DaemonContext shared singletons.
- *   4. Bind socket; accept loop peeks for `daemon/status`/`daemon/shutdown`
- *      control frames, otherwise hands off to ACP serve.
- *   5. Idle shutdown timer fires after PI_ACP_DAEMON_IDLE_SECONDS with no
- *      active connections. SIGINT / SIGTERM trigger graceful shutdown.
+ *   4. Bind ACP socket (raw NDJSON via node:net).
+ *   5. Bind control socket (HTTP via Bun.serve + Hono).
+ *   6. SIGINT/SIGTERM/idle-timeout trigger graceful shutdown.
  */
 
 import { createServer, type Server, type Socket } from "node:net";
 import { createDaemonContext, type DaemonContext } from "@pi-acp/daemon/context";
 import {
+	buildControlApp,
 	type ControlContext,
-	handleShutdown,
-	handleStatus,
-	peekFirstFrame,
+	type ControlServer,
+	serveControl,
 } from "@pi-acp/daemon/control";
 import { createIdleTracker, resolveIdleMs } from "@pi-acp/daemon/idle";
 import {
 	acquireLock,
+	controlSocketPath,
 	ensureSocketParentDir,
 	releaseLock,
 	removeStaleSocketIfAny,
@@ -56,6 +56,7 @@ export async function runDaemon(): Promise<void> {
 		if (shuttingDown) return;
 		shuttingDown = true;
 		server.close();
+		controlServer.stop();
 		for (const entry of connections) {
 			try {
 				entry.handle.dispose();
@@ -84,6 +85,7 @@ export async function runDaemon(): Promise<void> {
 		pid: process.pid,
 		version: pkgJson.version,
 		activeConnections: () => connections.size,
+		onShutdown: shutdown,
 	};
 
 	const server: Server = createServer((socket) => {
@@ -91,29 +93,10 @@ export async function runDaemon(): Promise<void> {
 			socket.destroy();
 			return;
 		}
-		void onAccept(socket);
+		onAccept(socket);
 	});
 
-	const onAccept = async (socket: Socket): Promise<void> => {
-		// Peek the first frame: control method handlers run inline; anything
-		// else proceeds to the ACP path.
-		const peek = await peekFirstFrame(socket);
-
-		if (peek.kind === "control") {
-			if (peek.method === "daemon/status") {
-				handleStatus(socket, peek.id ?? null, controlCtx);
-				return;
-			}
-			if (peek.method === "daemon/shutdown") {
-				handleShutdown(socket, peek.id ?? null, shutdown);
-				return;
-			}
-		}
-
-		// Unshift the peeked bytes back onto the socket so the ACP framing
-		// layer sees them as if they were never consumed.
-		if (peek.buffered.length > 0) socket.unshift(peek.buffered);
-
+	const onAccept = (socket: Socket): void => {
 		const handle = serveAcp({
 			input: socket,
 			output: socket,
@@ -147,9 +130,16 @@ export async function runDaemon(): Promise<void> {
 		server.once("error", reject);
 	});
 
+	const controlServer: ControlServer = serveControl(
+		buildControlApp(controlCtx),
+		controlSocketPath(),
+	);
+
 	// biome-ignore lint/complexity/useLiteralKeys: env var keys need bracket access for tsc strict mode
 	if (process.env["PI_ACP_DAEMON_DEBUG"] === "1") {
-		process.stderr.write(`pi-acp daemon: listening on ${socketPath()} (pid ${process.pid})\n`);
+		process.stderr.write(
+			`pi-acp daemon: acp=${socketPath()} control=${controlSocketPath()} pid=${process.pid}\n`,
+		);
 	}
 
 	process.on("SIGINT", () => {

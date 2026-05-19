@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { lockfilePath, socketPath } from "@pi-acp/daemon/socket";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { controlSocketPath, lockfilePath, socketPath } from "@pi-acp/daemon/socket";
 
 function restoreEnv(key: string, value: string | undefined): void {
 	if (value === undefined) {
@@ -14,38 +16,28 @@ describe("socket path resolution", () => {
 		const prev = process.env["PI_ACP_SOCKET_DIR"];
 		process.env["PI_ACP_SOCKET_DIR"] = "/tmp/test-pi-acp";
 		try {
-			const path = socketPath();
-			expect(path.startsWith("/tmp/test-pi-acp/")).toBe(true);
-			expect(path.endsWith(".sock")).toBe(true);
+			expect(socketPath()).toBe("/tmp/test-pi-acp/pi-acp.sock");
+			expect(controlSocketPath()).toBe("/tmp/test-pi-acp/pi-acp-control.sock");
+			expect(lockfilePath()).toBe("/tmp/test-pi-acp/pi-acp.lock");
 		} finally {
 			restoreEnv("PI_ACP_SOCKET_DIR", prev);
 		}
 	});
 
-	test("falls back to XDG_RUNTIME_DIR when override absent", () => {
-		const prevOverride = process.env["PI_ACP_SOCKET_DIR"];
-		const prevXdg = process.env["XDG_RUNTIME_DIR"];
+	test("defaults to ~/.pi/run/ when override absent", () => {
+		const prev = process.env["PI_ACP_SOCKET_DIR"];
 		restoreEnv("PI_ACP_SOCKET_DIR", undefined);
-		process.env["XDG_RUNTIME_DIR"] = "/tmp/xdg-test";
 		try {
-			const path = socketPath();
-			expect(path.startsWith("/tmp/xdg-test/")).toBe(true);
+			expect(socketPath()).toBe(join(homedir(), ".pi", "run", "pi-acp.sock"));
+			expect(controlSocketPath()).toBe(join(homedir(), ".pi", "run", "pi-acp-control.sock"));
 		} finally {
-			restoreEnv("PI_ACP_SOCKET_DIR", prevOverride);
-			restoreEnv("XDG_RUNTIME_DIR", prevXdg);
+			restoreEnv("PI_ACP_SOCKET_DIR", prev);
 		}
 	});
 
-	test("socket basename includes uid for per-user scoping", () => {
-		const path = socketPath();
-		const uid = typeof process.getuid === "function" ? process.getuid() : 0;
-		expect(path).toContain(`pi-acp-${uid}`);
-	});
-
-	test("lockfilePath is socket path with .lock suffix on unix", () => {
-		if (process.platform === "win32") return;
+	test("lockfile is sibling of socket", () => {
 		const sock = socketPath();
 		const lock = lockfilePath();
-		expect(lock).toBe(`${sock}.lock`);
+		expect(lock).toBe(sock.replace(/\.sock$/, ".lock"));
 	});
 });

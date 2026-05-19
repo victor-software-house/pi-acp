@@ -16,7 +16,7 @@ export async function runClient(): Promise<void> {
 	}
 	if (socket === null) {
 		process.stderr.write(
-			"pi-acp: failed to connect to daemon socket within 3s. Try `pi-acp --daemon` manually or set PI_ACP_NO_DAEMON=1.\n",
+			"pi-acp: failed to connect to daemon socket within 3s. Try `pi-acp --daemon` manually.\n",
 		);
 		process.exit(1);
 	}

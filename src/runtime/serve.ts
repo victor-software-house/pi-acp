@@ -1,6 +1,5 @@
 /**
- * Shared ACP-over-stream wiring used by both the in-process v0.5 fallback and
- * the daemon's per-connection accept path.
+ * ACP-over-stream wiring for the daemon's per-connection accept path.
  *
  * Owns nothing global. Returns the constructed AgentSideConnection plus a
  * shutdown helper. Caller decides what process / signal handlers to attach.
@@ -16,8 +15,7 @@ export interface ServeOptions {
 	input: Duplex;
 	/** Writes to the client. */
 	output: Duplex;
-	/** Optional daemon context. Absent in `PI_ACP_NO_DAEMON=1` fallback path. */
-	daemonContext?: DaemonContext;
+	daemonContext: DaemonContext;
 }
 
 export interface ServeHandle {

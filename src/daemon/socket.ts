@@ -1,46 +1,34 @@
 import {
 	closeSync,
 	constants as fsConstants,
+	mkdirSync,
 	openSync,
 	readFileSync,
 	statSync,
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
-import { tmpdir, userInfo } from "node:os";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 /**
- * Per-UID socket path. Unix family: under XDG_RUNTIME_DIR (or TMPDIR) so the
- * file is bounded to the user. Windows: named pipe in the per-user namespace.
+ * Socket + lockfile live under ~/.pi/run/ by default so everything pi-related
+ * stays under one tree. PI_ACP_SOCKET_DIR overrides for tests / sandboxing.
  */
+function baseDir(): string {
+	return process.env["PI_ACP_SOCKET_DIR"] ?? join(homedir(), ".pi", "run");
+}
+
 export function socketPath(): string {
-	if (process.platform === "win32") {
-		const user = process.env["USERNAME"] ?? userInfo().username;
-		return `\\\\.\\pipe\\pi-acp-${user}`;
-	}
-	const baseDir =
-		process.env["PI_ACP_SOCKET_DIR"] ??
-		process.env["XDG_RUNTIME_DIR"] ??
-		process.env["TMPDIR"] ??
-		tmpdir();
-	const uid =
-		typeof process.getuid === "function"
-			? process.getuid()
-			: userInfo().uid !== -1
-				? userInfo().uid
-				: 0;
-	return join(baseDir, `pi-acp-${uid}.sock`);
+	return join(baseDir(), "pi-acp.sock");
+}
+
+export function controlSocketPath(): string {
+	return join(baseDir(), "pi-acp-control.sock");
 }
 
 export function lockfilePath(): string {
-	if (process.platform === "win32") {
-		// Named pipes aren't files — use a regular lockfile in TMPDIR.
-		const baseDir = process.env["TMPDIR"] ?? tmpdir();
-		const user = process.env["USERNAME"] ?? userInfo().username;
-		return join(baseDir, `pi-acp-${user}.lock`);
-	}
-	return `${socketPath()}.lock`;
+	return join(baseDir(), "pi-acp.lock");
 }
 
 function errnoCode(err: unknown): string | undefined {
@@ -72,6 +60,7 @@ export interface LockAcquireResult {
  * and its PID is alive, refuse. If the PID is dead, reclaim.
  */
 export function acquireLock(): LockAcquireResult {
+	ensureSocketParentDir();
 	const path = lockfilePath();
 	for (let attempt = 0; attempt < 2; attempt++) {
 		try {
@@ -121,13 +110,7 @@ function readPidFromLockfile(path: string): number | undefined {
 	}
 }
 
-/**
- * Remove a socket file left behind by a dead daemon. Safe no-op on Windows
- * (named pipes have no filesystem residue) or if the path doesn't exist.
- */
-export function removeStaleSocketIfAny(): void {
-	if (process.platform === "win32") return;
-	const path = socketPath();
+function removeIfExists(path: string): void {
 	try {
 		statSync(path);
 		unlinkSync(path);
@@ -136,17 +119,16 @@ export function removeStaleSocketIfAny(): void {
 	}
 }
 
-/**
- * Ensure the directory the socket lives in exists. Skip on Windows (the
- * named-pipe namespace is provided by the OS).
- */
+export function removeStaleSocketIfAny(): void {
+	removeIfExists(socketPath());
+	removeIfExists(controlSocketPath());
+}
+
 export function ensureSocketParentDir(): void {
-	if (process.platform === "win32") return;
 	const dir = dirname(socketPath());
 	try {
-		statSync(dir);
-	} catch {
-		// Defer mkdir to the OS-default; if the parent is missing we surface
-		// the error later at bind() rather than guessing at mode bits here.
+		mkdirSync(dir, { recursive: true, mode: 0o700 });
+	} catch (err) {
+		if (errnoCode(err) !== "EEXIST") throw err;
 	}
 }
