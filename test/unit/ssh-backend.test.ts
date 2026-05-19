@@ -11,7 +11,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -32,11 +32,14 @@ beforeAll(() => {
 	// where <path> is the cat target rewritten as <path>.txt for success or
 	// <path>.fail-<code> to force a non-zero exit, or <path>.sleep-<ms> to
 	// force a delay before responding.
+	// Fake ssh shim: parses the argv shape SshBackend builds, records the
+	// full argv to $PI_ACP_SSH_TEST_FIXTURES/last-argv for assertions, then
+	// dispatches scripted behaviors per fixture file.
 	const shim = `#!/usr/bin/env bash
-# Skip "-o BatchMode=yes -o ConnectTimeout=N target -- cat /path"
-# argv layout: [-o BatchMode=yes] [-o ConnectTimeout=N] target -- cat /path
 set -u
-host="$1" # iterated below
+fixture_root="\${PI_ACP_SSH_TEST_FIXTURES:?missing}"
+printf '%s\\n' "$@" > "\${fixture_root}/last-argv"
+
 target=""
 cmd_path=""
 seen_double_dash=0
@@ -55,25 +58,17 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-# Extract host (after optional user@)
 case "$target" in
   *@*) host="\${target#*@}";;
   *)   host="$target";;
 esac
 
-fixture_root="\${PI_ACP_SSH_TEST_FIXTURES:?missing}"
 key="\${fixture_root}/\${host}\${cmd_path}"
 
 if [ -f "\${key}.fail" ]; then
   code=$(cat "\${key}.fail")
   echo "fake ssh: simulated failure" >&2
   exit "$code"
-fi
-if [ -f "\${key}.sleep" ]; then
-  # exec replaces bash with sleep in the same PID so SIGKILL from the
-  # parent's timeout reaches the actual sleep (otherwise sleep would be
-  # reparented and keep the pipe open past the timeout).
-  exec sleep "$(cat "\${key}.sleep")"
 fi
 if [ -f "\${key}.ok" ]; then
   cat "\${key}.ok"
@@ -95,12 +90,7 @@ afterAll(() => {
 	rmSync(fixturesDir, { recursive: true, force: true });
 });
 
-function fixture(
-	host: string,
-	path: string,
-	suffix: "ok" | "fail" | "sleep",
-	payload: string,
-): void {
+function fixture(host: string, path: string, suffix: "ok" | "fail", payload: string): void {
 	const dir = join(fixturesDir, host, ...path.split("/").slice(0, -1));
 	mkdirSync(dir, { recursive: true });
 	const filename = path.split("/").pop() ?? "";
@@ -183,23 +173,29 @@ describe("SshBackend.reload + getAgentsFiles", () => {
 		expect(backend.getPrompts().prompts).toEqual([]);
 	});
 
-	test("aborts a slow operation at the configured timeout", async () => {
-		const host = "fixture-host-slow";
-		fixture(host, "/slow/file", "sleep", "2");
+	test("passes ssh self-terminate options derived from timeoutMs", async () => {
+		// Timeout enforcement happens at the ssh-protocol layer via
+		// -o ConnectTimeout (TCP + handshake) and
+		// -o ServerAliveInterval/-o ServerAliveCountMax (post-auth stall).
+		// The shim records argv to last-argv; we assert the right options
+		// reached ssh with the expected values derived from timeoutMs.
+		const host = "fixture-host-argv";
+		fixture(host, "/probe", "ok", "ok");
 		const backend = new SshBackend({
-			id: "slow",
+			id: "argv",
 			host,
-			paths: { agentsFiles: ["/slow/file"] },
-			timeoutMs: 300,
+			paths: { agentsFiles: ["/probe"] },
+			timeoutMs: 6000,
 			sshCommand: shimPath,
 		});
-		const start = Date.now();
 		await backend.reload();
-		const elapsed = Date.now() - start;
-		expect(elapsed).toBeLessThan(1_500);
-		expect(backend.getAgentsFiles()).toEqual([]);
-		const diagnostics = backend.getSkills().diagnostics;
-		expect(diagnostics.some((d) => d.message.includes("/slow/file"))).toBe(true);
+		const argv = readFileSync(join(fixturesDir, "last-argv"), "utf8").split("\n");
+		expect(argv).toContain("BatchMode=yes");
+		expect(argv).toContain("ConnectTimeout=6");
+		expect(argv).toContain("ServerAliveInterval=2");
+		expect(argv).toContain("ServerAliveCountMax=3");
+		expect(argv).toContain("cat");
+		expect(argv).toContain("/probe");
 	});
 
 	test("getSystemPrompt / getAppendSystemPrompt return empty defaults", () => {

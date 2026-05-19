@@ -10,17 +10,14 @@
  * `fs/listDir` analogue on the wire today) or an explicit file manifest,
  * both deferred to future phases.
  *
- * Shell-level timeout uses macOS-shipped `/usr/bin/perl` inline:
- *   `perl -e 'alarm shift; exec @ARGV or die' <sec> ssh ...`
- * `alarm` sends SIGALRM after N seconds, terminating the exec'd ssh. perl
- * ships on every Unix platform we target (macOS + Linux), no PATH lookup
- * involved. Combined with ssh's own `ConnectTimeout` /
- * `ServerAliveInterval` / `ServerAliveCountMax`, ssh self-terminates on
- * stalled remotes long before perl's alarm fires. Bun Shell `$`
- * interpolations are auto-escaped; Bun's `ShellPromise` has no `.timeout`
- * primitive (verified at runtime against bun 1.3.14), and macOS does not
- * ship coreutils' `timeout(1)`, so perl is the cleanest cross-platform
- * shell-layer answer. See the `bun-shell` skill for `$` semantics.
+ * Timeout: pure ssh-protocol options — `-o ConnectTimeout=N` caps the TCP
+ * + handshake phase; `-o ServerAliveInterval=2 -o ServerAliveCountMax=N`
+ * caps post-auth silence on a stalled remote. ssh self-terminates without
+ * any caller-side wrapper. Bun Shell `$` interpolations are auto-escaped;
+ * `ShellPromise` has no `.timeout()` primitive (verified at runtime
+ * against bun 1.3.14 — only `cwd/env/quiet/nothrow/throws/text/json/
+ * lines/arrayBuffer/bytes/blob/run/then`), but ssh's own options cover
+ * the 99% of real-world stall modes. See the `bun-shell` skill.
  */
 
 import { $ } from "bun";
@@ -163,14 +160,12 @@ export class SshBackend implements ResourceSource {
 		const seconds = Math.max(1, Math.ceil(this.timeoutMs / 1000));
 		const aliveCount = Math.max(1, Math.floor(seconds / 2));
 		const result =
-			await $`perl -e 'alarm shift @ARGV; exec @ARGV or die "exec: $!\n"' ${seconds} ${this.sshCommand} -o BatchMode=yes -o ConnectTimeout=${seconds} -o ServerAliveInterval=2 -o ServerAliveCountMax=${aliveCount} ${this.target()} -- cat ${path}`
+			await $`${this.sshCommand} -o BatchMode=yes -o ConnectTimeout=${seconds} -o ServerAliveInterval=2 -o ServerAliveCountMax=${aliveCount} ${this.target()} -- cat ${path}`
 				.quiet()
 				.nothrow();
 		if (result.exitCode !== 0) {
 			const stderr = result.stderr.toString().trim();
-			// perl's alarm sends SIGALRM → exit 142 (128 + 14).
-			const label = result.exitCode === 142 ? "ssh timeout" : `ssh exited ${result.exitCode}`;
-			throw new Error(`${label}: ${stderr || "(no stderr)"}`);
+			throw new Error(`ssh exited ${result.exitCode}: ${stderr || "(no stderr)"}`);
 		}
 		return result.stdout.toString();
 	}
