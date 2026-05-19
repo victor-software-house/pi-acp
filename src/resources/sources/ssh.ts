@@ -10,25 +10,23 @@
  * `fs/listDir` analogue on the wire today) or an explicit file manifest,
  * both deferred to future phases.
  *
- * Timeout lives at the shell layer in a uv-shebanged Python helper
- * (`scripts/ssh-cat.py`) invoked via Bun Shell `$`. ssh-cat passes
- * `subprocess.run(timeout=...)` AND wires ssh's own `ServerAliveInterval`
- * / `ServerAliveCountMax` / `ConnectTimeout` so ssh self-terminates on a
- * stalled remote without the caller having to kill the subprocess tree.
- * Bun Shell `$` is the right call here — interpolations are auto-escaped,
- * the helper handles the timeout that `$` itself cannot, and macOS does
- * not ship coreutils' `timeout(1)`. The `bun-shell` + `uv-python-cli`
- * skills are the canonical references for the pattern.
+ * Shell-level timeout uses macOS-shipped `/usr/bin/perl` inline:
+ *   `perl -e 'alarm shift; exec @ARGV or die' <sec> ssh ...`
+ * `alarm` sends SIGALRM after N seconds, terminating the exec'd ssh. perl
+ * ships on every Unix platform we target (macOS + Linux), no PATH lookup
+ * involved. Combined with ssh's own `ConnectTimeout` /
+ * `ServerAliveInterval` / `ServerAliveCountMax`, ssh self-terminates on
+ * stalled remotes long before perl's alarm fires. Bun Shell `$`
+ * interpolations are auto-escaped; Bun's `ShellPromise` has no `.timeout`
+ * primitive (verified at runtime against bun 1.3.14), and macOS does not
+ * ship coreutils' `timeout(1)`, so perl is the cleanest cross-platform
+ * shell-layer answer. See the `bun-shell` skill for `$` semantics.
  */
-
-import { fileURLToPath } from "node:url";
 
 import { $ } from "bun";
 
 import type { PromptTemplate, ResourceDiagnostic, Skill } from "@earendil-works/pi-coding-agent";
 import type { ResourceSource } from "@pi-acp/resources/sources/base";
-
-const SSH_CAT_SCRIPT = fileURLToPath(new URL("../../../scripts/ssh-cat.py", import.meta.url));
 
 export interface SshBackendPaths {
 	skills?: string | undefined;
@@ -163,12 +161,15 @@ export class SshBackend implements ResourceSource {
 
 	private async cat(path: string): Promise<string> {
 		const seconds = Math.max(1, Math.ceil(this.timeoutMs / 1000));
-		const result = await $`${SSH_CAT_SCRIPT} --target ${this.target()} --path ${path} --timeout-sec ${seconds} --ssh ${this.sshCommand}`
-			.quiet()
-			.nothrow();
+		const aliveCount = Math.max(1, Math.floor(seconds / 2));
+		const result =
+			await $`perl -e 'alarm shift @ARGV; exec @ARGV or die "exec: $!\n"' ${seconds} ${this.sshCommand} -o BatchMode=yes -o ConnectTimeout=${seconds} -o ServerAliveInterval=2 -o ServerAliveCountMax=${aliveCount} ${this.target()} -- cat ${path}`
+				.quiet()
+				.nothrow();
 		if (result.exitCode !== 0) {
 			const stderr = result.stderr.toString().trim();
-			const label = result.exitCode === 124 ? "ssh-cat timeout" : `ssh exited ${result.exitCode}`;
+			// perl's alarm sends SIGALRM → exit 142 (128 + 14).
+			const label = result.exitCode === 142 ? "ssh timeout" : `ssh exited ${result.exitCode}`;
 			throw new Error(`${label}: ${stderr || "(no stderr)"}`);
 		}
 		return result.stdout.toString();
