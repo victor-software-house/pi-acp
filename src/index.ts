@@ -2,6 +2,21 @@ import { platform } from "node:os";
 import { AgentSideConnection, ndJsonStream } from "@agentclientprotocol/sdk";
 import { PiAcpAgent } from "@pi-acp/acp/agent";
 
+// ACP transports JSON-RPC NDJSON over stdout. Any stray byte on stdout
+// poisons the protocol stream. Redirect console.{log,info,warn,debug} to
+// stderr so transitive deps (or our own debug prints) can't corrupt it.
+{
+	const toStderr = (...args: unknown[]): void => {
+		process.stderr.write(
+			`${args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ")}\n`,
+		);
+	};
+	console.log = toStderr;
+	console.info = toStderr;
+	console.warn = toStderr;
+	console.debug = toStderr;
+}
+
 // Terminal Auth entrypoint: ACP client launches with `--terminal-login`.
 if (process.argv.includes("--terminal-login")) {
 	const { spawnSync } = await import("node:child_process");
@@ -48,10 +63,11 @@ const output = new ReadableStream<Uint8Array>({
 const stream = ndJsonStream(input, output);
 const agent = new AgentSideConnection((conn) => new PiAcpAgent(conn), stream);
 
+let shuttingDown = false;
 function shutdown() {
+	if (shuttingDown) return;
+	shuttingDown = true;
 	try {
-		// AgentSideConnection stores the agent instance internally;
-		// call dispose() on it if available for clean shutdown.
 		if ("agent" in agent) {
 			const inner: unknown = agent.agent;
 			if (
@@ -70,9 +86,10 @@ function shutdown() {
 	process.exit(0);
 }
 
-process.stdin.on("end", shutdown);
-process.stdin.on("close", shutdown);
-process.stdin.resume();
+// Drive shutdown from the connection lifecycle, not from raw stdin events.
+// `AgentSideConnection.closed` resolves on both clean EOF and stream errors.
+void agent.closed.then(shutdown);
+
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 process.stdout.on("error", () => process.exit(0));

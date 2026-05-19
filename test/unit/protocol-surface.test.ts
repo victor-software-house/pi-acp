@@ -142,9 +142,7 @@ describe("protocol surface: closeSession", () => {
 describe("protocol surface: resumeSession", () => {
 	test("rejects non-absolute cwd", () => {
 		const { agent } = createAgent();
-		expect(
-			agent.resumeSession({ sessionId: "test", cwd: "relative/path" }),
-		).rejects.toThrow();
+		expect(agent.resumeSession({ sessionId: "test", cwd: "relative/path" })).rejects.toThrow();
 	});
 });
 
