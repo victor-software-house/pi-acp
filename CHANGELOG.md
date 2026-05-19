@@ -1,3 +1,11 @@
+# [0.14.0](https://github.com/victor-software-house/pi-acp/compare/v0.13.1...v0.14.0) (2026-05-19)
+
+
+### Features
+
+* **acp:** extMethod / extNotification dispatcher with pi-acp/ namespace ([0a8eca3](https://github.com/victor-software-house/pi-acp/commit/0a8eca3ed2bfc0b928e8fb9b6f7962431cfcc1d6))
+* **acp:** FR-6.5 — bash tool ACP terminal delegation ([6593ebc](https://github.com/victor-software-house/pi-acp/commit/6593ebcb842529bc8534ad0c1019e68b798d07ae))
+
 ## [0.13.1](https://github.com/victor-software-house/pi-acp/compare/v0.13.0...v0.13.1) (2026-05-19)
 
 
