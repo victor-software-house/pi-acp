@@ -1,3 +1,10 @@
+# [0.13.0](https://github.com/victor-software-house/pi-acp/compare/v0.12.0...v0.13.0) (2026-05-19)
+
+
+### Features
+
+* **resources:** FR-7 diagnostics surface — opt-in session-start report ([b8ef581](https://github.com/victor-software-house/pi-acp/commit/b8ef581b4559bf65047c324e19e22c72ac84b74b))
+
 # [0.12.0](https://github.com/victor-software-house/pi-acp/compare/v0.11.0...v0.12.0) (2026-05-19)
 
 
