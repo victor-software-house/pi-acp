@@ -1,3 +1,10 @@
+# [0.12.0](https://github.com/victor-software-house/pi-acp/compare/v0.11.0...v0.12.0) (2026-05-19)
+
+
+### Features
+
+* **resources:** FR-5 cwd-modes (none tmpdir; local/overlay passthrough) ([5eaa2c6](https://github.com/victor-software-house/pi-acp/commit/5eaa2c637a08e3cdd5f4aa9f4c9cab0e87a992a6))
+
 # [0.11.0](https://github.com/victor-software-house/pi-acp/compare/v0.10.0...v0.11.0) (2026-05-19)
 
 

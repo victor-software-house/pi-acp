@@ -1,6 +1,6 @@
 {
 	"name": "@victor-software-house/pi-acp",
-	"version": "0.11.0",
+	"version": "0.12.0",
 	"description": "ACP adapter for pi coding agent",
 	"license": "MIT",
 	"author": "Victor Software House",
