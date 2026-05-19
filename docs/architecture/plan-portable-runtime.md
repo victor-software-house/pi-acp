@@ -174,8 +174,8 @@ Numbering aligns with the combined PRD-002 + PRD-003 phase sequence shipped on t
 | 7 — HTTP backend | `HttpBackend` + tests via injected `fetchImpl` stub | Phase 4 | M (shipped) |
 | 8a — FR-6 read tool delegation | pi's `createReadToolDefinition` + `ReadOperations` injection + `customTools` overlay gated on `fs.readTextFile` | Phase 4 | M (shipped) |
 | 8b — `AcpFsBackend` (deferred) | AGENTS-file discovery over ACP; blocked on sessionId-not-yet-available at `buildResourceLoader` time | Phase 4 | open design |
-| 9 — `import_resource` tool | Custom tool + `extendResources` wiring | Phases 4, 5 | M |
-| 10 — Cwd modes | `overlay` + `none` mode handlers + tmpdir lifecycle | Phases 4, 5 | M |
+| 9 — `import_resource` tool | Custom tool + `extendResources` wiring | Phases 4, 5 | deferred (Q1 verification) |
+| 10 — Cwd modes | `none` tmpdir lifecycle via `resolveMode` + `PiAcpSession.cleanups`; `local`/`overlay` documented as identical passthrough | Phases 4, 5 | M (shipped) |
 | 11 — Diagnostics + release | Diagnostic surface, README, CHANGELOG, tag v0.6.0 | All prior | S |
 
 Phases 6–7 can swap order. Phase 8 depends on Phases 4+5. Phase 9 depends on Phases 4+5.

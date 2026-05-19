@@ -289,6 +289,12 @@ export interface PiAcpSessionOpts {
 	conn: AgentSideConnection;
 	/** Whether the client supports terminal output metadata. */
 	supportsTerminalOutput?: boolean | undefined;
+	/**
+	 * Best-effort cleanup callbacks run at session dispose. PRD-002 §FR-5
+	 * `none` mode passes a tmpdir rmSync here. Callbacks must not throw
+	 * (the dispose path catches but logs nothing).
+	 */
+	cleanups?: Array<() => void>;
 }
 
 export class PiAcpSession {
@@ -319,6 +325,7 @@ export class PiAcpSession {
 	private lastAssistantStopReason: string | null = null;
 	private lastEmit: Promise<void> = Promise.resolve();
 	private unsubscribe: (() => void) | undefined;
+	private readonly cleanups: Array<() => void>;
 
 	constructor(opts: PiAcpSessionOpts) {
 		this.sessionId = opts.sessionId;
@@ -327,12 +334,20 @@ export class PiAcpSession {
 		this.piSession = opts.piSession;
 		this.conn = opts.conn;
 		this.supportsTerminalOutput = opts.supportsTerminalOutput ?? false;
+		this.cleanups = opts.cleanups ?? [];
 		this.unsubscribe = this.piSession.subscribe((ev: AgentSessionEvent) => this.handlePiEvent(ev));
 	}
 
 	dispose(): void {
 		this.unsubscribe?.();
 		this.piSession.dispose();
+		for (const cleanup of this.cleanups) {
+			try {
+				cleanup();
+			} catch {
+				// best-effort; FR-5 tmpdir removal is the only registered case
+			}
+		}
 	}
 
 	/**

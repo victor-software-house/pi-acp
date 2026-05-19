@@ -71,6 +71,7 @@ import { formatToolContent } from "@pi-acp/acp/translate/tool-content";
 import { piChangelogPath } from "@pi-acp/pi-package";
 import { VirtualResourceLoader } from "@pi-acp/resources/loader";
 import { loadManifest, type ManifestDiagnostic } from "@pi-acp/resources/manifest";
+import { type ResolveModeResult, resolveMode } from "@pi-acp/resources/modes";
 import type { ResourceSource } from "@pi-acp/resources/sources/base";
 import { HttpBackend } from "@pi-acp/resources/sources/http";
 import { LocalBackend } from "@pi-acp/resources/sources/local";
@@ -237,8 +238,10 @@ export class PiAcpAgent implements ACPAgent {
 	private async buildResourceLoader(
 		cwd: string,
 		sessionParams?: unknown,
-	): Promise<VirtualResourceLoader> {
+	): Promise<{ loader: VirtualResourceLoader; modeResult: ResolveModeResult }> {
 		const loaded = await loadManifest({ cwd, sessionParams });
+		const modeResult = resolveMode({ manifest: loaded.manifest, requestedCwd: cwd });
+		const effectiveCwd = modeResult.cwd;
 		const diagnostics: ManifestDiagnostic[] = [...loaded.diagnostics];
 		const sources: ResourceSource[] = [];
 
@@ -247,7 +250,7 @@ export class PiAcpAgent implements ACPAgent {
 				sources.push(
 					new LocalBackend({
 						id: root.id,
-						cwd: root.paths.cwd ?? cwd,
+						cwd: root.paths.cwd ?? effectiveCwd,
 						agentDir: root.paths.agentDir ?? getAgentDir(),
 					}),
 				);
@@ -282,10 +285,11 @@ export class PiAcpAgent implements ACPAgent {
 		}
 
 		// VirtualResourceLoader needs at least one LocalBackend for extensions
-		// + themes. Synthesize one from the session cwd if the manifest didn't
-		// already declare one.
+		// + themes. Synthesize one from the effective cwd if the manifest
+		// didn't already declare one. In `none` mode the effective cwd is the
+		// ephemeral tmpdir, so the synthesized backend sees a clean root.
 		if (!sources.some((s) => s.kind === "local")) {
-			sources.unshift(new LocalBackend({ cwd, agentDir: getAgentDir() }));
+			sources.unshift(new LocalBackend({ cwd: effectiveCwd, agentDir: getAgentDir() }));
 		}
 
 		const loader = new VirtualResourceLoader({
@@ -304,7 +308,7 @@ export class PiAcpAgent implements ACPAgent {
 				process.stderr.write(`pi-acp manifest [${d.source}${where}]: ${d.message}\n`);
 			}
 		}
-		return loader;
+		return { loader, modeResult };
 	}
 
 	/**
@@ -387,22 +391,39 @@ export class PiAcpAgent implements ACPAgent {
 	}
 
 	async newSession(params: NewSessionRequest) {
-		if (!isAbsolute(params.cwd)) {
+		// In `local` / `overlay` modes the cwd must be absolute and exist on
+		// disk. In `none` mode we synthesize a tmpdir and ignore params.cwd
+		// for tool targeting, but the manifest still cascades from
+		// params.cwd's project-root .pi-acp.yaml so a passed-in cwd is not
+		// useless — we just don't run pi against it.
+		const builtResources = await this.buildResourceLoader(params.cwd, params).catch(
+			(e: unknown) => {
+				const authErr = detectAuthError(e);
+				if (authErr !== null) throw authErr;
+				const msg = e instanceof Error ? e.message : String(e);
+				throw RequestError.internalError({}, `Failed to load pi-acp manifest: ${msg}`);
+			},
+		);
+		const { loader: resourceLoader, modeResult } = builtResources;
+		const effectiveCwd = modeResult.cwd;
+
+		if (modeResult.mode !== "none" && !isAbsolute(params.cwd)) {
+			modeResult.cleanup();
 			throw RequestError.invalidParams(`cwd must be an absolute path: ${params.cwd}`);
 		}
 
-		const acpReadOverlay = this.buildAcpReadOverlay(params.cwd);
+		const acpReadOverlay = this.buildAcpReadOverlay(effectiveCwd);
 		let result: CreateAgentSessionResult;
 		try {
-			const resourceLoader = await this.buildResourceLoader(params.cwd, params);
 			result = await createAgentSession({
-				cwd: params.cwd,
+				cwd: effectiveCwd,
 				resourceLoader,
 				...(acpReadOverlay
 					? { tools: acpReadOverlay.tools, customTools: acpReadOverlay.customTools }
 					: {}),
 			});
 		} catch (e: unknown) {
+			modeResult.cleanup();
 			const authErr = detectAuthError(e);
 			if (authErr !== null) throw authErr;
 			const msg = e instanceof Error ? e.message : String(e);
@@ -417,6 +438,7 @@ export class PiAcpAgent implements ACPAgent {
 		const availableModels = piSession.modelRegistry.getAvailable();
 		if (availableModels.length === 0) {
 			piSession.dispose();
+			modeResult.cleanup();
 			throw RequestError.authRequired(
 				{ authMethods: buildAuthMethods() },
 				"Configure an API key or log in with an OAuth provider.",
@@ -431,11 +453,12 @@ export class PiAcpAgent implements ACPAgent {
 
 		const session = new PiAcpSession({
 			sessionId,
-			cwd: params.cwd,
+			cwd: effectiveCwd,
 			mcpServers: params.mcpServers,
 			piSession,
 			conn: this.conn,
 			supportsTerminalOutput: this.clientCapabilities.terminalOutput,
+			cleanups: modeResult.ephemeral ? [modeResult.cleanup] : [],
 		});
 
 		this.sessions.register(session);
@@ -753,7 +776,7 @@ export class PiAcpAgent implements ACPAgent {
 		let result: CreateAgentSessionResult;
 		try {
 			const sm = PiSessionManager.open(sessionFile);
-			const resourceLoader = await this.buildResourceLoader(params.cwd, params);
+			const { loader: resourceLoader } = await this.buildResourceLoader(params.cwd, params);
 			result = await createAgentSession({
 				cwd: params.cwd,
 				sessionManager: sm,
@@ -901,7 +924,7 @@ export class PiAcpAgent implements ACPAgent {
 		let result: CreateAgentSessionResult;
 		try {
 			const sm = PiSessionManager.open(sessionFile);
-			const resourceLoader = await this.buildResourceLoader(params.cwd, params);
+			const { loader: resourceLoader } = await this.buildResourceLoader(params.cwd, params);
 			result = await createAgentSession({
 				cwd: params.cwd,
 				sessionManager: sm,
@@ -979,7 +1002,7 @@ export class PiAcpAgent implements ACPAgent {
 		let result: CreateAgentSessionResult;
 		try {
 			const sm = PiSessionManager.forkFrom(sourceFile, params.cwd);
-			const resourceLoader = await this.buildResourceLoader(params.cwd, params);
+			const { loader: resourceLoader } = await this.buildResourceLoader(params.cwd, params);
 			result = await createAgentSession({
 				cwd: params.cwd,
 				sessionManager: sm,
