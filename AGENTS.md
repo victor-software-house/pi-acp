@@ -1,9 +1,9 @@
 # pi-acp (ACP adapter for pi-coding-agent)
 
-This repository implements an **Agent Client Protocol (ACP)** adapter for **pi** (`@mariozechner/pi-coding-agent`) without modifying pi.
+This repository implements an **Agent Client Protocol (ACP)** adapter for **pi** (`@earendil-works/pi-coding-agent`) without modifying pi.
 
 - ACP side: **JSON-RPC 2.0 over stdio** using `@agentclientprotocol/sdk` (TypeScript)
-- Pi side: direct `AgentSession` embedding via `createAgentSession()` from `@mariozechner/pi-coding-agent`
+- Pi side: direct `AgentSession` embedding via `createAgentSession()` from `@earendil-works/pi-coding-agent`
 
 ## Architecture
 
