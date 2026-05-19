@@ -36,6 +36,10 @@ These are not theoretical. They are the daily experience of working on contracto
 
 This PRD is **not** about granting external control over pi's safety model. It is about decoupling **where pi-acp runs** from **where its inputs come from**.
 
+### Relationship to PRD-003 (runtime daemon)
+
+PRD-002 and PRD-003 ship together in v0.6. PRD-003 introduces a long-running daemon + thin-client split (ADR-0010); PRD-002's backends (`VirtualResourceLoader`, `SshPool`, `HttpCache`, `ManifestCache`) plug into the daemon's shared-singleton context (`DaemonContext`) so caches and connections are shared across all ACP clients connected to the daemon. PRD-002 phases re-sequence to land **after** PRD-003 Phase 1 (daemon skeleton) is in place. PRD-002 implementation is otherwise architecturally identical — the backends are pure classes; the daemon is the host.
+
 ### What pi already exposes that makes this tractable
 
 The pi `0.75` SDK is unusually well-factored for the work this PRD wants to do:
