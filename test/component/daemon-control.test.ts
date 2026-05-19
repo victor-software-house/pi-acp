@@ -15,9 +15,9 @@ interface TestEnv {
 
 function setupEnv(): TestEnv {
 	const dir = mkdtempSync(join(tmpdir(), "pi-acp-control-test-"));
-	const uid = typeof process.getuid === "function" ? process.getuid() : 0;
-	const sock = join(dir, `pi-acp-${uid}.sock`);
-	return { socketDir: dir, socketPath: sock, lockfilePath: `${sock}.lock` };
+	const sock = join(dir, "pi-acp.sock");
+	const lock = join(dir, "pi-acp.lock");
+	return { socketDir: dir, socketPath: sock, lockfilePath: lock };
 }
 
 function teardownEnv(env: TestEnv): void {
