@@ -1,3 +1,10 @@
+## [0.17.1](https://github.com/victor-software-house/pi-acp/compare/v0.17.0...v0.17.1) (2026-05-19)
+
+
+### Bug Fixes
+
+* **acp:** DISABLE session/delete by default — irreversible, no client confirmation ([160dcd5](https://github.com/victor-software-house/pi-acp/commit/160dcd56f9a5f328d7f611e435d0a5feb1172501))
+
 # [0.17.0](https://github.com/victor-software-house/pi-acp/compare/v0.16.0...v0.17.0) (2026-05-19)
 
 
