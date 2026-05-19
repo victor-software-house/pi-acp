@@ -589,19 +589,19 @@ And the failing source is marked [failed] with the underlying reason
 
 ## 11. Rollout Plan
 
-Phased, behind manifest opt-in throughout. Each phase is one PR. Plan file (`docs/architecture/plan-portable-runtime.md`) has the per-phase detail.
+Phased, behind manifest opt-in throughout. Each phase is one PR. Plan file (`docs/architecture/plan-portable-runtime.md`) has the per-phase detail. Phases re-numbered to align with the PRD-003 daemon-foundation work that shipped alongside.
 
 1. **Phase 0** — This PRD + ADR-0006..0009 + plan. No code.
-2. **Phase 1** — `VirtualResourceLoader` + `LocalBackend` only. Behavior identical to v0.5 with no manifest. Existing tests pass unmodified.
-3. **Phase 2** — Manifest parser + cascade resolver + Zod schema. Tests with example manifests.
-4. **Phase 3** — `SshBackend`. Tests against fake-ssh fixture (no real network).
-5. **Phase 4** — `HttpBackend`. Tests with fixture HTTPS server.
-6. **Phase 5** — `AcpFsBackend` + FR-6 `read` delegation. Integration test against fake ACP client.
-7. **Phase 6** — `import_resource` custom tool. Tests with synthetic source.
-8. **Phase 7** — Cwd-independence modes (`overlay`, `none`). Component tests.
-9. **Phase 8** — Diagnostics surfacing + final docs. Cut `v0.6.0`.
+2. **Phase 4** — `VirtualResourceLoader` + `LocalBackend` only. Behavior identical to v0.5 with no manifest. Existing tests pass unmodified. *(Shipped — was originally numbered Phase 1.)*
+3. **Phase 5** — Manifest parser + cascade resolver + Zod schema. Tests with example manifests. *(Shipped — was originally numbered Phase 2.)*
+4. **Phase 6** — `SshBackend`. Tests against fake-ssh fixture (no real network).
+5. **Phase 7** — `HttpBackend`. Tests with fixture HTTPS server.
+6. **Phase 8** — `AcpFsBackend` + FR-6 `read` delegation. Integration test against fake ACP client.
+7. **Phase 9** — `import_resource` custom tool. Tests with synthetic source.
+8. **Phase 10** — Cwd-independence modes (`overlay`, `none`). Component tests.
+9. **Phase 11** — Diagnostics surfacing + final docs. Cut `v0.6.0`.
 
-Phases 3–4 can swap order. Phase 5 depends on Phase 1+2. Phase 6 depends on Phase 1+2.
+Phases 6–7 can swap order. Phase 8 depends on Phases 4+5. Phase 9 depends on Phases 4+5.
 
 ---
 

@@ -163,19 +163,21 @@ Both registered via `createAgentSession({ customTools })`. `read` delegation als
 
 ## Implementation Order
 
+Numbering aligns with the combined PRD-002 + PRD-003 phase sequence shipped on the v0.6 train. Phases 1–3 belong to PRD-003 (daemon foundation); this plan covers Phases 4 onward.
+
 | Phase | Component | Dependencies | Estimated Scope |
 |-------|-----------|--------------|-----------------|
-| 0 — Docs | PRD-002 + ADR-0006..0009 + this plan | None | M (in flight) |
-| 1 — Loader skeleton | `VirtualResourceLoader` + `LocalBackend` only | Phase 0 | M |
-| 2 — Manifest | Cascade resolver + Zod schema + YAML parser dep | Phase 1 | M |
-| 3 — SSH backend | `SshBackend` + tests against fake-ssh fixture | Phase 1 | M |
-| 4 — HTTP backend | `HttpBackend` + tests with fixture HTTPS server | Phase 1 | S |
-| 5 — ACP-FS backend + read delegation | `AcpFsBackend` + `acp_read` custom tool + capability gate | Phase 1 | M |
-| 6 — `import_resource` tool | Custom tool + `extendResources` wiring | Phases 1, 2 | M |
-| 7 — Cwd modes | `overlay` + `none` mode handlers + tmpdir lifecycle | Phases 1, 2 | M |
-| 8 — Diagnostics + release | Diagnostic surface, README, CHANGELOG, tag v0.6.0 | All prior | S |
+| 0 — Docs | PRD-002 + ADR-0006..0009 + this plan | None | M (shipped) |
+| 4 — Loader skeleton | `VirtualResourceLoader` + `LocalBackend` only | Phase 0 | M (shipped) |
+| 5 — Manifest | Cascade resolver + Zod schema + YAML parser dep | Phase 4 | M (shipped) |
+| 6 — SSH backend | `SshBackend` + tests against fake-ssh fixture | Phase 4 | M |
+| 7 — HTTP backend | `HttpBackend` + tests with fixture HTTPS server | Phase 4 | S |
+| 8 — ACP-FS backend + read delegation | `AcpFsBackend` + `acp_read` custom tool + capability gate | Phase 4 | M |
+| 9 — `import_resource` tool | Custom tool + `extendResources` wiring | Phases 4, 5 | M |
+| 10 — Cwd modes | `overlay` + `none` mode handlers + tmpdir lifecycle | Phases 4, 5 | M |
+| 11 — Diagnostics + release | Diagnostic surface, README, CHANGELOG, tag v0.6.0 | All prior | S |
 
-Phases 3–4 can swap order. Phase 5 depends on Phase 1+2. Phase 6 depends on Phase 1+2.
+Phases 6–7 can swap order. Phase 8 depends on Phases 4+5. Phase 9 depends on Phases 4+5.
 
 ## Phase Detail
 

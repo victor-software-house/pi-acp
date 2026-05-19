@@ -268,7 +268,16 @@ export class PiAcpAgent implements ACPAgent {
 		});
 		await loader.reload();
 
-		void diagnostics; // surfaced in Phase 11 diagnostics work
+		// Phase 11 will surface these via session/update. Until then, log
+		// them to stderr under the daemon-debug flag so a malformed manifest
+		// doesn't fail silently.
+		// biome-ignore lint/complexity/useLiteralKeys: env var keys need bracket access for tsc strict mode
+		if (diagnostics.length > 0 && process.env["PI_ACP_DAEMON_DEBUG"] === "1") {
+			for (const d of diagnostics) {
+				const where = d.path !== undefined ? ` ${d.path}` : "";
+				process.stderr.write(`pi-acp manifest [${d.source}${where}]: ${d.message}\n`);
+			}
+		}
 		return loader;
 	}
 
