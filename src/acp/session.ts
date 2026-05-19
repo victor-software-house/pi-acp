@@ -295,6 +295,12 @@ export interface PiAcpSessionOpts {
 	 * (the dispose path catches but logs nothing).
 	 */
 	cleanups?: Array<() => void>;
+	/**
+	 * PRD-002 §FR-7 diagnostics report. When non-empty, emitted as a
+	 * leading `agent_message_chunk` on the first prompt of this session.
+	 * Discarded after that single emission.
+	 */
+	diagnosticsReport?: string | undefined;
 }
 
 export class PiAcpSession {
@@ -326,6 +332,7 @@ export class PiAcpSession {
 	private lastEmit: Promise<void> = Promise.resolve();
 	private unsubscribe: (() => void) | undefined;
 	private readonly cleanups: Array<() => void>;
+	private pendingDiagnosticsReport: string | null;
 
 	constructor(opts: PiAcpSessionOpts) {
 		this.sessionId = opts.sessionId;
@@ -335,6 +342,10 @@ export class PiAcpSession {
 		this.conn = opts.conn;
 		this.supportsTerminalOutput = opts.supportsTerminalOutput ?? false;
 		this.cleanups = opts.cleanups ?? [];
+		this.pendingDiagnosticsReport =
+			opts.diagnosticsReport !== undefined && opts.diagnosticsReport !== ""
+				? opts.diagnosticsReport
+				: null;
 		this.unsubscribe = this.piSession.subscribe((ev: AgentSessionEvent) => this.handlePiEvent(ev));
 	}
 
@@ -398,6 +409,26 @@ export class PiAcpSession {
 						typeof img === "object" && img !== null && "type" in img && img.type === "image",
 				)
 			: [];
+
+		// PRD-002 §FR-7 — emit the once-per-session diagnostics report
+		// before the model produces any output. Drop the reference after
+		// the first prompt so subsequent prompts in the same session don't
+		// repeat it. Fire-and-forget; failure here doesn't block the turn.
+		if (this.pendingDiagnosticsReport !== null) {
+			const report = this.pendingDiagnosticsReport;
+			this.pendingDiagnosticsReport = null;
+			void this.conn
+				.sessionUpdate({
+					sessionId: this.sessionId,
+					update: {
+						sessionUpdate: "agent_message_chunk",
+						content: { type: "text", text: `${report}\n` },
+					},
+				})
+				.catch(() => {
+					/* best-effort */
+				});
+		}
 
 		this.piSession.prompt(message, { images: imageContents }).catch(() => {
 			void this.flushEmits().finally(() => {

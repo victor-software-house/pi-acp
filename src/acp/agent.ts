@@ -69,6 +69,7 @@ import { extractUserMessageText } from "@pi-acp/acp/translate/pi-messages";
 import { acpPromptToPiMessage } from "@pi-acp/acp/translate/prompt";
 import { formatToolContent } from "@pi-acp/acp/translate/tool-content";
 import { piChangelogPath } from "@pi-acp/pi-package";
+import { buildDiagnosticsReport } from "@pi-acp/resources/diagnostics";
 import { VirtualResourceLoader } from "@pi-acp/resources/loader";
 import { loadManifest, type ManifestDiagnostic } from "@pi-acp/resources/manifest";
 import { type ResolveModeResult, resolveMode } from "@pi-acp/resources/modes";
@@ -238,7 +239,12 @@ export class PiAcpAgent implements ACPAgent {
 	private async buildResourceLoader(
 		cwd: string,
 		sessionParams?: unknown,
-	): Promise<{ loader: VirtualResourceLoader; modeResult: ResolveModeResult }> {
+	): Promise<{
+		loader: VirtualResourceLoader;
+		modeResult: ResolveModeResult;
+		diagnosticsEnabled: boolean;
+		manifestDiagnostics: ManifestDiagnostic[];
+	}> {
 		const loaded = await loadManifest({ cwd, sessionParams });
 		const modeResult = resolveMode({ manifest: loaded.manifest, requestedCwd: cwd });
 		const effectiveCwd = modeResult.cwd;
@@ -308,7 +314,12 @@ export class PiAcpAgent implements ACPAgent {
 				process.stderr.write(`pi-acp manifest [${d.source}${where}]: ${d.message}\n`);
 			}
 		}
-		return { loader, modeResult };
+		return {
+			loader,
+			modeResult,
+			diagnosticsEnabled: loaded.manifest.diagnostics === true,
+			manifestDiagnostics: diagnostics,
+		};
 	}
 
 	/**
@@ -404,13 +415,25 @@ export class PiAcpAgent implements ACPAgent {
 				throw RequestError.internalError({}, `Failed to load pi-acp manifest: ${msg}`);
 			},
 		);
-		const { loader: resourceLoader, modeResult } = builtResources;
+		const {
+			loader: resourceLoader,
+			modeResult,
+			diagnosticsEnabled,
+			manifestDiagnostics,
+		} = builtResources;
 		const effectiveCwd = modeResult.cwd;
 
 		if (modeResult.mode !== "none" && !isAbsolute(params.cwd)) {
 			modeResult.cleanup();
 			throw RequestError.invalidParams(`cwd must be an absolute path: ${params.cwd}`);
 		}
+
+		const diagnosticsReport = diagnosticsEnabled
+			? buildDiagnosticsReport({
+					sources: resourceLoader.listSources(),
+					manifestDiagnostics,
+				}).text
+			: "";
 
 		const acpReadOverlay = this.buildAcpReadOverlay(effectiveCwd);
 		let result: CreateAgentSessionResult;
@@ -459,6 +482,7 @@ export class PiAcpAgent implements ACPAgent {
 			conn: this.conn,
 			supportsTerminalOutput: this.clientCapabilities.terminalOutput,
 			cleanups: modeResult.ephemeral ? [modeResult.cleanup] : [],
+			...(diagnosticsReport !== "" ? { diagnosticsReport } : {}),
 		});
 
 		this.sessions.register(session);
