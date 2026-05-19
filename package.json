@@ -51,6 +51,7 @@
 		"@agentclientprotocol/sdk": "^0.22.1",
 		"@earendil-works/pi-coding-agent": "^0.75.3",
 		"hono": "^4.12.21",
+		"yaml": "^2.9.0",
 		"zod": "^4.3.6"
 	},
 	"devDependencies": {
