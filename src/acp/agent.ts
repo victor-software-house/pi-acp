@@ -64,7 +64,6 @@ import {
 import { extractUserMessageText } from "@pi-acp/acp/translate/pi-messages";
 import { acpPromptToPiMessage } from "@pi-acp/acp/translate/prompt";
 import { formatToolContent } from "@pi-acp/acp/translate/tool-content";
-import { hasPiAuthConfigured } from "@pi-acp/pi-auth/status";
 
 import pkgJson from "../../package.json" with { type: "json" };
 
@@ -205,13 +204,6 @@ export class PiAcpAgent implements ACPAgent {
 	async newSession(params: NewSessionRequest) {
 		if (!isAbsolute(params.cwd)) {
 			throw RequestError.invalidParams(`cwd must be an absolute path: ${params.cwd}`);
-		}
-
-		if (!hasPiAuthConfigured()) {
-			throw RequestError.authRequired(
-				{ authMethods: buildAuthMethods() },
-				"Configure an API key or log in with an OAuth provider.",
-			);
 		}
 
 		let result: CreateAgentSessionResult;
