@@ -1358,8 +1358,7 @@ function buildCommandList(
 
 function findChangelog(): string | null {
 	try {
-		const whichCmd = process.platform === "win32" ? "where" : "which";
-		const which = spawnSync(whichCmd, ["pi"], { encoding: "utf-8" });
+		const which = spawnSync("which", ["pi"], { encoding: "utf-8" });
 		const piPath = String(which.stdout ?? "")
 			.split(/\r?\n/)[0]
 			?.trim();

@@ -1,9 +1,9 @@
 /**
- * pi-acp entry point. Dispatches between four modes:
+ * pi-acp entry point. Dispatches between modes:
  *
- *   --terminal-login                    → foreground pi for interactive auth (v0.5 flow)
+ *   --terminal-login                    → foreground pi for interactive auth
  *   --daemon                            → long-running orchestrator (PRD-003)
- *   --no-daemon | PI_ACP_NO_DAEMON=1    → v0.5 in-process server (escape hatch)
+ *   --daemon-status / --daemon-stop     → operator commands
  *   (default)                           → thin client; auto-spawns daemon
  *
  * ACP transports JSON-RPC NDJSON over stdout. Any stray byte poisons the
@@ -11,7 +11,7 @@
  * so transitive deps (or our own debug prints) can't corrupt it.
  */
 
-import { platform } from "node:os";
+export {};
 
 {
 	const toStderr = (...args: unknown[]): void => {
@@ -38,9 +38,6 @@ if (argv.includes("--terminal-login")) {
 } else if (argv.includes("--daemon-stop")) {
 	const { runDaemonStop } = await import("@pi-acp/client/operator");
 	await runDaemonStop();
-} else if (argv.includes("--no-daemon") || process.env["PI_ACP_NO_DAEMON"] === "1") {
-	const { runInProcess } = await import("@pi-acp/runtime/in-process");
-	runInProcess();
 } else {
 	const { runClient } = await import("@pi-acp/client/index");
 	await runClient();
@@ -48,8 +45,7 @@ if (argv.includes("--terminal-login")) {
 
 async function runTerminalLogin(): Promise<void> {
 	const { spawnSync } = await import("node:child_process");
-	const isWindows = platform() === "win32";
-	const cmd = process.env["PI_ACP_PI_COMMAND"] ?? (isWindows ? "pi.cmd" : "pi");
+	const cmd = process.env["PI_ACP_PI_COMMAND"] ?? "pi";
 	const res = spawnSync(cmd, [], { stdio: "inherit", env: process.env });
 
 	if (res.error && "code" in res.error && res.error.code === "ENOENT") {

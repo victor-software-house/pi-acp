@@ -42,8 +42,7 @@ describe("socket path resolution", () => {
 		expect(path).toContain(`pi-acp-${uid}`);
 	});
 
-	test("lockfilePath is socket path with .lock suffix on unix", () => {
-		if (process.platform === "win32") return;
+	test("lockfilePath is socket path with .lock suffix", () => {
 		const sock = socketPath();
 		const lock = lockfilePath();
 		expect(lock).toBe(`${sock}.lock`);

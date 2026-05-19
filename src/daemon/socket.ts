@@ -11,14 +11,10 @@ import { tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 
 /**
- * Per-UID socket path. Unix family: under XDG_RUNTIME_DIR (or TMPDIR) so the
- * file is bounded to the user. Windows: named pipe in the per-user namespace.
+ * Per-UID socket path. Lives under XDG_RUNTIME_DIR (or TMPDIR) so it's bounded
+ * to the user. Posix-only — Windows is not supported.
  */
 export function socketPath(): string {
-	if (process.platform === "win32") {
-		const user = process.env["USERNAME"] ?? userInfo().username;
-		return `\\\\.\\pipe\\pi-acp-${user}`;
-	}
 	const baseDir =
 		process.env["PI_ACP_SOCKET_DIR"] ??
 		process.env["XDG_RUNTIME_DIR"] ??
@@ -34,12 +30,6 @@ export function socketPath(): string {
 }
 
 export function lockfilePath(): string {
-	if (process.platform === "win32") {
-		// Named pipes aren't files — use a regular lockfile in TMPDIR.
-		const baseDir = process.env["TMPDIR"] ?? tmpdir();
-		const user = process.env["USERNAME"] ?? userInfo().username;
-		return join(baseDir, `pi-acp-${user}.lock`);
-	}
 	return `${socketPath()}.lock`;
 }
 
@@ -122,11 +112,9 @@ function readPidFromLockfile(path: string): number | undefined {
 }
 
 /**
- * Remove a socket file left behind by a dead daemon. Safe no-op on Windows
- * (named pipes have no filesystem residue) or if the path doesn't exist.
+ * Remove a socket file left behind by a dead daemon.
  */
 export function removeStaleSocketIfAny(): void {
-	if (process.platform === "win32") return;
 	const path = socketPath();
 	try {
 		statSync(path);
@@ -136,12 +124,7 @@ export function removeStaleSocketIfAny(): void {
 	}
 }
 
-/**
- * Ensure the directory the socket lives in exists. Skip on Windows (the
- * named-pipe namespace is provided by the OS).
- */
 export function ensureSocketParentDir(): void {
-	if (process.platform === "win32") return;
 	const dir = dirname(socketPath());
 	try {
 		statSync(dir);
