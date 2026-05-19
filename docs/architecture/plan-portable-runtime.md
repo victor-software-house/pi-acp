@@ -172,7 +172,8 @@ Numbering aligns with the combined PRD-002 + PRD-003 phase sequence shipped on t
 | 5 — Manifest | Cascade resolver + Zod schema + YAML parser dep | Phase 4 | M (shipped) |
 | 6 — SSH backend | `SshBackend` + tests against fake-ssh fixture | Phase 4 | M (shipped) |
 | 7 — HTTP backend | `HttpBackend` + tests via injected `fetchImpl` stub | Phase 4 | M (shipped) |
-| 8 — ACP-FS backend + read delegation | `AcpFsBackend` + `acp_read` custom tool + capability gate | Phase 4 | M |
+| 8a — FR-6 read tool delegation | pi's `createReadToolDefinition` + `ReadOperations` injection + `customTools` overlay gated on `fs.readTextFile` | Phase 4 | M (shipped) |
+| 8b — `AcpFsBackend` (deferred) | AGENTS-file discovery over ACP; blocked on sessionId-not-yet-available at `buildResourceLoader` time | Phase 4 | open design |
 | 9 — `import_resource` tool | Custom tool + `extendResources` wiring | Phases 4, 5 | M |
 | 10 — Cwd modes | `overlay` + `none` mode handlers + tmpdir lifecycle | Phases 4, 5 | M |
 | 11 — Diagnostics + release | Diagnostic surface, README, CHANGELOG, tag v0.6.0 | All prior | S |
@@ -266,21 +267,38 @@ Phases 6–7 can swap order. Phase 8 depends on Phases 4+5. Phase 9 depends on P
 
 **Acceptance**: HTTP source contributes AGENTS files from a public URL. Cache TTL respected (verified by stub call counts). Non-HTTPS rejected at construction. **Shipped on `main`.**
 
-### Phase 5 — ACP-FS backend + `read` delegation
+### Phase 5 — FR-6 read tool delegation (8a, shipped) + AcpFsBackend (8b, deferred)
 
-1. `src/resources/sources/acp-fs.ts` — `AcpFsBackend`. Reads via `connection.fs.readTextFile`. Constructor takes the bound `AgentSideConnection`.
-2. `src/resources/tools/acp-read.ts` — `acpReadTool`. Pi `ToolDefinition` with `name: "read"`, same argument schema as built-in.
-3. Wiring in `src/acp/agent.ts`:
-   - If `clientCapabilities.fs?.readTextFile === true`:
-     - `tools: ["bash", "edit", "write", "grep", "find", "ls"]` (exclude `read`).
-     - `customTools: [acpReadTool, ...]`.
-   - Else: leave `tools` undefined (pi defaults include `read`), no `acpReadTool`.
-4. Tests in `test/component/acp-fs-delegation.test.ts`:
-   - Capability present: `read` call routes through ACP, not local FS.
-   - Capability absent: `read` call uses pi's built-in.
-   - Fake ACP client validates the routing.
+**Phase 8a — FR-6 read tool ACP-FS delegation (shipped)**
 
-**Acceptance**: When client advertises `fs.readTextFile`, `read` tool calls become `fs/read_text_file` requests. When absent, pi's built-in handles reads locally.
+1. `src/acp/acp-read-operations.ts` — `createAcpReadOperations({ conn, getSessionId })`. Returns a pi `ReadOperations` object. `readFile(absolutePath)` calls `conn.readTextFile({ sessionId, path: absolutePath })` and returns `Buffer.from(response.content, "utf8")`. `access` issues a probe read and discards the body. `detectImageMimeType` omitted (ACP fs is text-only).
+2. `src/acp/client-capabilities.ts` — extend `ClientCapabilityFlags` with `fsReadTextFile: boolean` reading `caps.fs?.readTextFile === true`.
+3. `src/acp/agent.ts` — `buildAcpReadOverlay(cwd)` private helper. When `clientCapabilities.fsReadTextFile === false`, returns `null` and the agent skips the overlay (pi's built-in `read` handles everything). When `true`, returns `{ sessionIdRef, tools, customTools }`:
+   - `tools: ["read", "bash", "edit", "write", "grep", "find", "ls"]`. The allowlist MUST include `"read"` — verified against `node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js:1811` where `allowedToolNames` filters BOTH builtins AND customTools by name. The customTool then shadows the builtin via the tool-definition `Map.set` path at line 1821. (PRD wording said "exclude read" — this is incorrect; corrected here.)
+   - `customTools: [createReadToolDefinition(cwd, { operations })]` where `operations` is the ACP-routed `ReadOperations`.
+   - `sessionIdRef: { current: "" }` — late-bound. The agent mutates `sessionIdRef.current = piSession.sessionManager.getSessionId()` immediately after `createAgentSession` returns. The tool isn't invoked until prompt-time, so the late binding is safe. `operations.readFile` throws `"sessionId not yet bound"` if called before the ref is set (defensive guard).
+   - Wired into all 4 session-creation paths: `newSession`, `loadSession`, `resumeSession`, `forkSession`.
+4. Tests in `test/unit/acp-read-operations.test.ts` (8 cases) + extended `test/unit/client-capabilities.test.ts` (3 cases):
+   - `readTextFile` routing returns `Buffer` with utf8 content.
+   - Empty `sessionId` throws `"sessionId not yet bound"`.
+   - Late-bound ref: first call throws, then ref mutates, second call succeeds.
+   - Connection errors propagate to caller.
+   - `access` issues a probe and discards the body; errors propagate.
+   - `detectImageMimeType` not advertised.
+   - `parseClientCapabilities` reads `caps.fs.readTextFile` (true / absent / explicit-false).
+
+**Acceptance**: When client advertises `fs.readTextFile`, `read` tool calls route through `conn.readTextFile`. When absent, pi's built-in handles reads locally. **Shipped on `main`.**
+
+**Phase 8b — AcpFsBackend (deferred — open design)**
+
+Architectural snag: `AcpFsBackend` would need `sessionId` to call `conn.readTextFile({ sessionId, path })` for AGENTS-file discovery at session-start, but `sessionId` isn't available at `buildResourceLoader` time (pi mints it inside `createAgentSession`, after the loader is built).
+
+Three viable shapes:
+1. **Late-bound reload** — backend records "sessionId not bound" diagnostic on first reload; agent re-triggers reload after session creation. Requires `VirtualResourceLoader.reloadOne(sourceId)` to avoid re-fetching SSH/HTTP sources twice per session start.
+2. **Pre-mint sessionId** — generate UUID before `createAgentSession`, pass to both the backend AND inject into pi via a SessionManager constructor that accepts an external id. Verify pi accepts external id (`SessionManager.create` currently mints internally).
+3. **Drop the use case** — SSH source already covers "read remote agent files" for any reachable host. ACP-FS for discovery only adds value when the operator's only path to the remote FS is through the ACP client (e.g., a Zed Remote target with no SSH access). Unclear if this scenario matters in v0.6.
+
+Decision deferred to follow-up review with concrete user demand evidence.
 
 ### Phase 6 — `import_resource` custom tool
 
