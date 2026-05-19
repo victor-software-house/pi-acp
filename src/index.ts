@@ -32,6 +32,12 @@ if (argv.includes("--terminal-login")) {
 } else if (argv.includes("--daemon")) {
 	const { runDaemon } = await import("@pi-acp/daemon/index");
 	await runDaemon();
+} else if (argv.includes("--daemon-status")) {
+	const { runDaemonStatus } = await import("@pi-acp/client/operator");
+	await runDaemonStatus();
+} else if (argv.includes("--daemon-stop")) {
+	const { runDaemonStop } = await import("@pi-acp/client/operator");
+	await runDaemonStop();
 } else if (argv.includes("--no-daemon") || process.env["PI_ACP_NO_DAEMON"] === "1") {
 	const { runInProcess } = await import("@pi-acp/runtime/in-process");
 	runInProcess();
