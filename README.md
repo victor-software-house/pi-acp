@@ -65,7 +65,7 @@ Active development. ACP compliance is improving steadily. Development is centere
 - **ACP terminal delegation** (PRD-002 §FR-6.5) — When the client advertises `clientCapabilities.terminal`, pi-acp overrides pi's built-in `bash` tool with an ACP `createTerminal`-backed implementation. Commands run on the client's machine via `terminal/*` lifecycle, so Zed Remote workflows execute `bash` on the remote workspace where the user actually edits. Pairs with `read` delegation so the full read/bash pair lands consistently remote.
 - **ACP provider config** — `agentCapabilities.providers = {}` advertises `providers/list`, `providers/set`, `providers/disable`. Soft-disable on top of pi's `unregisterProvider`. Per-process; no `models.json` writer.
 - **ACP logout** — `agentCapabilities.auth.logout = {}` advertises `logout`. Clears every provider's credentials from the shared `AuthStorage` in one call.
-- **ACP session delete** — `sessionCapabilities.delete = {}` advertises `session/delete`. Removes the session file via `fs.rmSync` after daemon registry release.
+- **ACP session delete** — implemented but DISABLED by default (see Limitations). Direct invocation returns `methodNotFound`; capability not advertised. Flip `PiAcpAgent.SESSION_DELETE_ENABLED` to enable.
 - **ACP `extMethod` / `extNotification`** — dispatcher under the `pi-acp/` namespace. Built-ins: `pi-acp/ping`, `pi-acp/runtime-info`.
 
 ## Resource composition (`.pi-acp.yaml`)
@@ -258,10 +258,13 @@ test/
 
 ### ACP optional methods implemented (substrate completion at v0.16.0+)
 
-- **`session/delete`** -- advertised via `sessionCapabilities.delete = {}`. Removes the session file + releases daemon registry entry. Refuses sessions owned by another connection.
 - **`providers/list` / `providers/set` / `providers/disable`** -- advertised via `agentCapabilities.providers = {}`. Operates on every live `ModelRegistry`. Soft-disable is layered on top of pi's destructive `unregisterProvider`. Mutations are per-process (no models.json writer in pi).
 - **`logout`** -- advertised via `agentCapabilities.auth.logout = {}`. Clears every provider's credentials from the shared AuthStorage. Sessions stay live; subsequent prompts may surface `auth_required`.
 - **`extMethod` / `extNotification`** -- dispatcher under the `pi-acp/` method-name namespace. Built-in handlers: `pi-acp/ping`, `pi-acp/runtime-info`. Unknown methods → `methodNotFound`.
+
+### Implemented but DISABLED by default
+
+- **`session/delete`** -- the implementation (release-from-daemon → `fs.rmSync` → cache purge) is in place, but the capability is NOT advertised in `initialize()` and direct invocations return `methodNotFound`. Gated behind `PiAcpAgent.SESSION_DELETE_ENABLED = false`. Rationale: ACP `session/delete` takes a single sessionId, has no confirmation surface, no trash, no recovery — easy to misfire from a UI button or a mistaken script. Re-enable only after a client-layer confirmation flow exists.
 
 ### Design decisions
 

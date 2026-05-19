@@ -203,6 +203,19 @@ export class PiAcpAgent implements ACPAgent {
 	 * report `current: null` per ACP spec even after disable.
 	 */
 	private readonly disabledProviders = new Set<string>();
+	/**
+	 * Master toggle for `session/delete` advertisement + method body.
+	 *
+	 * Disabled by default: the method irreversibly removes a session file
+	 * via fs.rmSync, and ACP clients invoke it with a single sessionId arg
+	 * — no confirmation surface, no trash. Easy to misfire from a UI or
+	 * an extension. Re-enable only when a confirmation flow exists at the
+	 * client layer or when the operator opts in via configuration.
+	 *
+	 * The implementation (release-from-daemon → fs.rmSync → cache purge)
+	 * is kept intact so re-enabling is a one-line flip plus a re-advertise.
+	 */
+	private static readonly SESSION_DELETE_ENABLED = false;
 
 	dispose(): void {
 		// On connection close, release every session this connection owned or
@@ -557,7 +570,10 @@ export class PiAcpAgent implements ACPAgent {
 					close: {},
 					resume: {},
 					fork: {},
-					delete: {},
+					// session/delete intentionally NOT advertised — see
+					// SESSION_DELETE_ENABLED. Irreversible file unlink with no
+					// confirmation surface is too easy to misfire from clients.
+					...(PiAcpAgent.SESSION_DELETE_ENABLED ? { delete: {} } : {}),
 				},
 				providers: {},
 			},
@@ -1060,21 +1076,29 @@ export class PiAcpAgent implements ACPAgent {
 	/**
 	 * Deletes a session's on-disk file + releases any live state.
 	 *
-	 * Pi's SessionManager exposes no `delete()` method (verified against
-	 * session-manager.d.ts) — sessions are append-only JSONL files. We
-	 * unlink the file directly via `fs.rmSync`. `resolveSessionFile`
-	 * sources paths from `PiSessionManager.listAll`, so the unlinked path
-	 * is always inside `~/.pi/agent/sessions/...`.
+	 * DISABLED by default via `PiAcpAgent.SESSION_DELETE_ENABLED = false`.
+	 * The capability is not advertised in initialize() and any direct call
+	 * is refused with `methodNotFound`. Rationale: ACP `session/delete`
+	 * carries only a sessionId — no confirmation surface, no trash, no
+	 * recovery. Easy to misfire from a UI button or a mistaken script,
+	 * and the consequence is permanent loss of session history.
+	 *
+	 * When enabled: Pi's SessionManager exposes no `delete()` method
+	 * (verified against session-manager.d.ts) — sessions are append-only
+	 * JSONL files. We unlink the file directly via `fs.rmSync`.
+	 * `resolveSessionFile` sources paths from `PiSessionManager.listAll`,
+	 * so the unlinked path is always inside `~/.pi/agent/sessions/...`.
 	 *
 	 * Refuses to delete sessions owned by ANOTHER connection in the daemon
 	 * registry — security boundary: clients may only delete sessions they
 	 * own or sessions that are not currently live. Always releases the
 	 * daemon registry entry first so the live piSession is disposed
 	 * cleanly before the file disappears.
-	 *
-	 * Gated by `sessionCapabilities.delete = {}` (advertised in initialize).
 	 */
 	async unstable_deleteSession(params: DeleteSessionRequest): Promise<DeleteSessionResponse> {
+		if (!PiAcpAgent.SESSION_DELETE_ENABLED) {
+			throw RequestError.methodNotFound("session/delete");
+		}
 		const sessionFile = await this.resolveSessionFile(params.sessionId);
 		if (sessionFile === null) {
 			throw RequestError.invalidParams(`Unknown sessionId: ${params.sessionId}`);

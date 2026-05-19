@@ -49,7 +49,7 @@ describe("protocol surface: initialize", () => {
 		expect(caps.loadSession).toBe(true);
 	});
 
-	test("advertises session capabilities: list, close, resume, fork, delete", async () => {
+	test("advertises session capabilities: list, close, resume, fork (delete intentionally NOT advertised)", async () => {
 		const { response } = await initAgent();
 		const caps = response.agentCapabilities;
 		if (caps === undefined) throw new Error("agentCapabilities missing");
@@ -59,7 +59,10 @@ describe("protocol surface: initialize", () => {
 		expect(sc.close).toBeDefined();
 		expect(sc.resume).toBeDefined();
 		expect(sc.fork).toBeDefined();
-		expect(sc.delete).toBeDefined();
+		// session/delete is gated behind PiAcpAgent.SESSION_DELETE_ENABLED
+		// (default false) — irreversible fs.rmSync with no client-side
+		// confirmation surface is too risky to advertise by default.
+		expect(sc.delete).toBeUndefined();
 	});
 
 	test("advertises providers + auth.logout capabilities", async () => {
