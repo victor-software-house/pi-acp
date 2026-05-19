@@ -11,6 +11,7 @@ status: Draft
 ## Source
 
 - **PRD**: `docs/prd/PRD-002-portable-runtime.md`
+- **Sibling plan**: `docs/architecture/plan-runtime-daemon.md` — backends in this plan land **after** the daemon skeleton, plugging into `DaemonContext` shared singletons.
 - **Date**: 2026-05-19
 - **Author**: Victor Araujo
 
