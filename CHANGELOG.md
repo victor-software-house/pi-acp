@@ -1,3 +1,10 @@
+# [0.6.0](https://github.com/victor-software-house/pi-acp/compare/v0.5.0...v0.6.0) (2026-05-19)
+
+
+### Features
+
+* **daemon:** introduce daemon + thin-client split (PRD-003 Phase 1) ([01a8bf8](https://github.com/victor-software-house/pi-acp/commit/01a8bf8bfa4543cef3d67149b18d7d1bcc04f1c9))
+
 # [0.5.0](https://github.com/victor-software-house/pi-acp/compare/v0.4.0...v0.5.0) (2026-05-19)
 
 
