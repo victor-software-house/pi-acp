@@ -208,14 +208,17 @@ describe("HttpBackend.reload + getAgentsFiles", () => {
 	});
 
 	test("times out a hanging fetch and surfaces a diagnostic", async () => {
+		// Use a generous gap (200ms timeout vs 5000ms hang) so CI runners
+		// under load don't race past the AbortController before the stub's
+		// setTimeout schedules.
 		const stub = makeFetchStub({
-			"https://example.com/slow": { delayMs: 1000 },
+			"https://example.com/slow": { delayMs: 5000 },
 		});
 		const backend = new HttpBackend({
 			id: "h",
 			baseUrl: "https://example.com",
 			paths: { agentsFiles: ["slow"] },
-			timeoutMs: 25,
+			timeoutMs: 200,
 			fetchImpl: stub.fetch,
 		});
 		await backend.reload();

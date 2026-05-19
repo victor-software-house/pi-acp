@@ -239,6 +239,7 @@ export class PiAcpAgent implements ACPAgent {
 	private async buildResourceLoader(
 		cwd: string,
 		sessionParams?: unknown,
+		opts?: { resolveCwdMode?: boolean },
 	): Promise<{
 		loader: VirtualResourceLoader;
 		modeResult: ResolveModeResult;
@@ -246,7 +247,14 @@ export class PiAcpAgent implements ACPAgent {
 		manifestDiagnostics: ManifestDiagnostic[];
 	}> {
 		const loaded = await loadManifest({ cwd, sessionParams });
-		const modeResult = resolveMode({ manifest: loaded.manifest, requestedCwd: cwd });
+		// Mode resolution mints a tmpdir for `mode: none`. Load/resume/fork
+		// paths pin cwd from the session file, so mode is irrelevant on those
+		// paths — passing { resolveCwdMode: false } avoids the leaked
+		// tmpdir + the cwd-mismatch (manifest tmpdir vs session-file cwd).
+		const shouldResolveMode = opts?.resolveCwdMode !== false;
+		const modeResult: ResolveModeResult = shouldResolveMode
+			? resolveMode({ manifest: loaded.manifest, requestedCwd: cwd })
+			: { mode: loaded.manifest.mode, cwd, cleanup: () => {}, ephemeral: false };
 		const effectiveCwd = modeResult.cwd;
 		const diagnostics: ManifestDiagnostic[] = [...loaded.diagnostics];
 		const sources: ResourceSource[] = [];
@@ -800,7 +808,9 @@ export class PiAcpAgent implements ACPAgent {
 		let result: CreateAgentSessionResult;
 		try {
 			const sm = PiSessionManager.open(sessionFile);
-			const { loader: resourceLoader } = await this.buildResourceLoader(params.cwd, params);
+			const { loader: resourceLoader } = await this.buildResourceLoader(params.cwd, params, {
+				resolveCwdMode: false,
+			});
 			result = await createAgentSession({
 				cwd: params.cwd,
 				sessionManager: sm,
@@ -948,7 +958,9 @@ export class PiAcpAgent implements ACPAgent {
 		let result: CreateAgentSessionResult;
 		try {
 			const sm = PiSessionManager.open(sessionFile);
-			const { loader: resourceLoader } = await this.buildResourceLoader(params.cwd, params);
+			const { loader: resourceLoader } = await this.buildResourceLoader(params.cwd, params, {
+				resolveCwdMode: false,
+			});
 			result = await createAgentSession({
 				cwd: params.cwd,
 				sessionManager: sm,
@@ -1026,7 +1038,9 @@ export class PiAcpAgent implements ACPAgent {
 		let result: CreateAgentSessionResult;
 		try {
 			const sm = PiSessionManager.forkFrom(sourceFile, params.cwd);
-			const { loader: resourceLoader } = await this.buildResourceLoader(params.cwd, params);
+			const { loader: resourceLoader } = await this.buildResourceLoader(params.cwd, params, {
+				resolveCwdMode: false,
+			});
 			result = await createAgentSession({
 				cwd: params.cwd,
 				sessionManager: sm,
