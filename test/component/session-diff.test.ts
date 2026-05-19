@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentSession } from "@mariozechner/pi-coding-agent";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { PiAcpSession } from "@pi-acp/acp/session";
 import { asAgentConn, FakeAgentSession, FakeAgentSideConnection } from "../helpers/fakes";
 

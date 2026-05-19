@@ -12,7 +12,7 @@ if (process.argv.includes("--terminal-login")) {
 	if (res.error && "code" in res.error && res.error.code === "ENOENT") {
 		process.stderr.write(
 			`pi-acp: could not start pi (command not found: ${cmd}). ` +
-				"Install via `npm install -g @mariozechner/pi-coding-agent` " +
+				"Install via `npm install -g @earendil-works/pi-coding-agent` " +
 				"or ensure `pi` is on your PATH.\n",
 		);
 		process.exit(1);

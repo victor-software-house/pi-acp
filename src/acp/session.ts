@@ -10,9 +10,9 @@ import {
 	type ToolCallLocation,
 	type ToolKind,
 } from "@agentclientprotocol/sdk";
-import type { AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
-import type { AssistantMessageEvent, ToolCall } from "@mariozechner/pi-ai";
-import type { AgentSession, AgentSessionEvent } from "@mariozechner/pi-coding-agent";
+import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AssistantMessageEvent, ToolCall } from "@earendil-works/pi-ai";
+import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import { formatToolContent, wrapStreamingBashOutput } from "@pi-acp/acp/translate/tool-content";
 import { unreachable } from "@pi-acp/acp/unreachable";
 import * as z from "zod";

@@ -36,14 +36,14 @@ import {
 	type SetSessionModeResponse,
 	type StopReason,
 } from "@agentclientprotocol/sdk";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { AssistantMessage, ToolResultMessage, UserMessage } from "@mariozechner/pi-ai";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AssistantMessage, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
 import {
 	type AgentSession,
 	type CreateAgentSessionResult,
 	createAgentSession,
 	SessionManager as PiSessionManager,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { buildAuthMethods } from "@pi-acp/acp/auth";
 import { detectAuthError } from "@pi-acp/acp/auth-required";
 import {
@@ -1179,14 +1179,11 @@ function buildCommandList(
 		}
 	}
 
-	const runner = piSession.extensionRunner;
-	if (runner) {
-		for (const cmd of runner.getRegisteredCommands()) {
-			commands.push({
-				name: cmd.name,
-				description: cmd.description ?? "(extension)",
-			});
-		}
+	for (const cmd of piSession.extensionRunner.getRegisteredCommands()) {
+		commands.push({
+			name: cmd.name,
+			description: cmd.description ?? "(extension)",
+		});
 	}
 
 	return commands;
