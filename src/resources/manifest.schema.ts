@@ -9,21 +9,21 @@
 
 import * as z from "zod";
 
-const IdSchema = z.string().min(1, "id is required");
+const IdSchema = z.string().trim().min(1, "id is required");
 
 const LocalPathsSchema = z
 	.object({
-		cwd: z.string().optional(),
-		agentDir: z.string().optional(),
+		cwd: z.string().trim().optional(),
+		agentDir: z.string().trim().optional(),
 	})
 	.strict();
 
 const RemotePathsSchema = z
 	.object({
-		skills: z.string().optional(),
-		prompts: z.string().optional(),
-		agentsFiles: z.array(z.string()).optional(),
-		extensions: z.string().optional(),
+		skills: z.string().trim().optional(),
+		prompts: z.string().trim().optional(),
+		agentsFiles: z.array(z.string().trim()).optional(),
+		extensions: z.string().trim().optional(),
 	})
 	.strict();
 
@@ -39,8 +39,8 @@ const SshRootSchema = z
 	.object({
 		id: IdSchema,
 		kind: z.literal("ssh"),
-		host: z.string().min(1),
-		user: z.string().optional(),
+		host: z.string().trim().min(1),
+		user: z.string().trim().optional(),
 		paths: RemotePathsSchema.default({}),
 	})
 	.strict();
@@ -75,7 +75,7 @@ export const RootSchema = z.discriminatedUnion("kind", [
 export const AutoImportSchema = z
 	.object({
 		source: IdSchema,
-		paths: z.array(z.string()).min(1),
+		paths: z.array(z.string().trim()).min(1),
 	})
 	.strict();
 
