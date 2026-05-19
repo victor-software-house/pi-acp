@@ -1,3 +1,10 @@
+# [0.15.0](https://github.com/victor-software-house/pi-acp/compare/v0.14.0...v0.15.0) (2026-05-19)
+
+
+### Features
+
+* **acp:** unstable_deleteSession + sessionCapabilities.delete capability ([79bee64](https://github.com/victor-software-house/pi-acp/commit/79bee646cab7e7f9de60c27b4fd6f89675cfcb2f))
+
 # [0.14.0](https://github.com/victor-software-house/pi-acp/compare/v0.13.1...v0.14.0) (2026-05-19)
 
 
