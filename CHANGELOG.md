@@ -1,3 +1,10 @@
+# [0.11.0](https://github.com/victor-software-house/pi-acp/compare/v0.10.0...v0.11.0) (2026-05-19)
+
+
+### Features
+
+* **acp:** FR-6 read tool ACP-FS delegation via ReadOperations injection ([375e18e](https://github.com/victor-software-house/pi-acp/commit/375e18e4c6a052a8a47cbd87e214b0e8c145b9a5))
+
 # [0.10.0](https://github.com/victor-software-house/pi-acp/compare/v0.9.0...v0.10.0) (2026-05-19)
 
 
