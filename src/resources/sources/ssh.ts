@@ -1,27 +1,34 @@
 /**
  * SshBackend: reads resource files from a remote host via the system `ssh`
  * command. Honors the operator's `~/.ssh/config` (ProxyJump, ControlMaster,
- * agent forwarding) by design — we shell out to the real `ssh` binary rather
- * than re-implementing SFTP. PRD-002 §FR-2.
+ * agent forwarding) by design — we shell out to the real `ssh` binary
+ * rather than re-implementing SFTP. PRD-002 §FR-2.
  *
  * Phase 6 scope: AGENTS files via explicit `paths.agentsFiles` list only.
  * Skills, prompts, and extensions emit a single "not yet implemented over
  * ssh" diagnostic each — they need either remote directory enumeration (no
- * `fs/listDir` analogue on the wire today) or an explicit file manifest, both
- * deferred to future phases.
+ * `fs/listDir` analogue on the wire today) or an explicit file manifest,
+ * both deferred to future phases.
  *
- * The system `ssh` invocation goes through `Bun.spawn` rather than Bun
- * Shell's `$` template because the bun-shell skill (chezmoi
- * `~/.agents/skills/bun-shell/SKILL.md`) calls out that `$` lacks timeout,
- * AbortSignal, and exit-code-aware error reporting. We want all three for a
- * network-dependent backend. The `Bun.spawn(["ssh", ...])` array form is
- * still injection-safe — arguments are passed as a literal argv, no shell
- * expansion — and matches the bun-shell skill's "When you still need
- * Bun.spawn" decision matrix.
+ * Timeout lives at the shell layer in a uv-shebanged Python helper
+ * (`scripts/ssh-cat.py`) invoked via Bun Shell `$`. ssh-cat passes
+ * `subprocess.run(timeout=...)` AND wires ssh's own `ServerAliveInterval`
+ * / `ServerAliveCountMax` / `ConnectTimeout` so ssh self-terminates on a
+ * stalled remote without the caller having to kill the subprocess tree.
+ * Bun Shell `$` is the right call here — interpolations are auto-escaped,
+ * the helper handles the timeout that `$` itself cannot, and macOS does
+ * not ship coreutils' `timeout(1)`. The `bun-shell` + `uv-python-cli`
+ * skills are the canonical references for the pattern.
  */
+
+import { fileURLToPath } from "node:url";
+
+import { $ } from "bun";
 
 import type { PromptTemplate, ResourceDiagnostic, Skill } from "@earendil-works/pi-coding-agent";
 import type { ResourceSource } from "@pi-acp/resources/sources/base";
+
+const SSH_CAT_SCRIPT = fileURLToPath(new URL("../../../scripts/ssh-cat.py", import.meta.url));
 
 export interface SshBackendPaths {
 	skills?: string | undefined;
@@ -155,35 +162,15 @@ export class SshBackend implements ResourceSource {
 	}
 
 	private async cat(path: string): Promise<string> {
-		const connectSeconds = Math.max(1, Math.ceil(this.timeoutMs / 1000));
-		const proc = Bun.spawn(
-			[
-				this.sshCommand,
-				"-o",
-				"BatchMode=yes",
-				"-o",
-				`ConnectTimeout=${connectSeconds}`,
-				this.target(),
-				"--",
-				"cat",
-				path,
-			],
-			{
-				stdout: "pipe",
-				stderr: "pipe",
-				env: process.env,
-				timeout: this.timeoutMs,
-				killSignal: "SIGKILL",
-			},
-		);
-		const [stdout, stderr, exitCode] = await Promise.all([
-			new Response(proc.stdout).text(),
-			new Response(proc.stderr).text(),
-			proc.exited,
-		]);
-		if (exitCode !== 0) {
-			throw new Error(`ssh exited ${exitCode}: ${stderr.trim() || "(no stderr)"}`);
+		const seconds = Math.max(1, Math.ceil(this.timeoutMs / 1000));
+		const result = await $`${SSH_CAT_SCRIPT} --target ${this.target()} --path ${path} --timeout-sec ${seconds} --ssh ${this.sshCommand}`
+			.quiet()
+			.nothrow();
+		if (result.exitCode !== 0) {
+			const stderr = result.stderr.toString().trim();
+			const label = result.exitCode === 124 ? "ssh-cat timeout" : `ssh exited ${result.exitCode}`;
+			throw new Error(`${label}: ${stderr || "(no stderr)"}`);
 		}
-		return stdout;
+		return result.stdout.toString();
 	}
 }
