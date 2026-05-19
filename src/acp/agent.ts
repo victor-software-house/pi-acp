@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import {
@@ -158,12 +159,29 @@ export class PiAcpAgent implements ACPAgent {
 		gatewayAuth: false,
 	};
 
-	dispose(): void {
-		this.sessions.disposeAll();
-		void this.daemonContext;
-	}
-
 	private readonly daemonContext: import("@pi-acp/daemon/context").DaemonContext | undefined;
+	/** Unique ID for this ACP connection. Used as the ownership key in the daemon SessionRegistry. */
+	private readonly connectionId = randomUUID();
+
+	dispose(): void {
+		// On connection close, release every session this connection owned or
+		// resumed from the daemon registry. Sessions another client still holds
+		// stay live; sessions only this connection held get disposed by release().
+		if (this.daemonContext !== undefined) {
+			const registry = this.daemonContext.sessionRegistry;
+			for (const entry of registry.listOwnedBy(this.connectionId)) {
+				const result = registry.release(entry.sessionId, this.connectionId);
+				if (result.kind === "disposed") {
+					try {
+						entry.piSession.dispose();
+					} catch {
+						/* best-effort */
+					}
+				}
+			}
+		}
+		this.sessions.disposeAll();
+	}
 
 	constructor(
 		conn: AgentSideConnection,
@@ -171,6 +189,28 @@ export class PiAcpAgent implements ACPAgent {
 	) {
 		this.conn = conn;
 		this.daemonContext = daemonContext;
+	}
+
+	private registerWithDaemon(input: {
+		sessionId: string;
+		piSession: AgentSession;
+		cwd: string;
+		sessionFile: string | undefined;
+	}): void {
+		if (this.daemonContext === undefined) return;
+		this.daemonContext.sessionRegistry.register({
+			sessionId: input.sessionId,
+			piSession: input.piSession,
+			ownerConnectionId: this.connectionId,
+			cwd: input.cwd,
+			sessionFile: input.sessionFile,
+		});
+	}
+
+	private releaseFromDaemon(sessionId: string): { disposed: boolean } {
+		if (this.daemonContext === undefined) return { disposed: true };
+		const result = this.daemonContext.sessionRegistry.release(sessionId, this.connectionId);
+		return { disposed: result.kind === "disposed" };
 	}
 
 	async initialize(params: InitializeRequest): Promise<InitializeResponse> {
@@ -249,6 +289,7 @@ export class PiAcpAgent implements ACPAgent {
 		});
 
 		this.sessions.register(session);
+		this.registerWithDaemon({ sessionId, piSession, cwd: params.cwd, sessionFile });
 
 		const modes = buildThinkingModes(piSession);
 		const models = buildModelState(piSession);
@@ -490,19 +531,60 @@ export class PiAcpAgent implements ACPAgent {
 		const PAGE_SIZE = 50;
 		const page = sessions.slice(start, start + PAGE_SIZE);
 
-		const acpSessions: SessionInfo[] = page.map((s) => ({
-			sessionId: s.id,
-			cwd: s.cwd,
-			title:
-				(s.name !== undefined && s.name !== "" ? s.name : null) ??
-				truncateSessionTitle(s.firstMessage) ??
-				null,
-			updatedAt: s.modified.toISOString(),
-		}));
+		const liveSessions =
+			this.daemonContext !== undefined ? this.daemonContext.sessionRegistry.listAll() : [];
+		const liveById = new Map(liveSessions.map((e) => [e.sessionId, e]));
 
+		const acpSessions: SessionInfo[] = page.map((s) => {
+			const live = liveById.get(s.id);
+			const isOwnedByThisConnection =
+				live !== undefined &&
+				(live.ownerConnectionId === this.connectionId || live.alsoHeldBy.has(this.connectionId));
+			return {
+				sessionId: s.id,
+				cwd: s.cwd,
+				title:
+					(s.name !== undefined && s.name !== "" ? s.name : null) ??
+					truncateSessionTitle(s.firstMessage) ??
+					null,
+				updatedAt: s.modified.toISOString(),
+				...(live !== undefined
+					? {
+							_meta: {
+								piAcp: {
+									live: true,
+									ownedByThisConnection: isOwnedByThisConnection,
+								},
+							},
+						}
+					: {}),
+			};
+		});
+
+		// Surface daemon-live sessions that are NOT on disk yet (e.g., newSession
+		// called but not yet persisted by pi). Insert at the front so the most
+		// recently-active live ones bubble up.
+		const seen = new Set(page.map((s) => s.id));
+		const liveOnly = liveSessions
+			.filter((e) => !seen.has(e.sessionId))
+			.map<SessionInfo>((e) => ({
+				sessionId: e.sessionId,
+				cwd: e.cwd,
+				title: null,
+				updatedAt: e.updatedAt.toISOString(),
+				_meta: {
+					piAcp: {
+						live: true,
+						ownedByThisConnection:
+							e.ownerConnectionId === this.connectionId || e.alsoHeldBy.has(this.connectionId),
+					},
+				},
+			}));
+
+		const merged = [...liveOnly, ...acpSessions];
 		const nextCursor = start + PAGE_SIZE < sessions.length ? String(start + PAGE_SIZE) : null;
 
-		return { sessions: acpSessions, nextCursor, _meta: {} };
+		return { sessions: merged, nextCursor, _meta: {} };
 	}
 
 	async loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
@@ -543,6 +625,12 @@ export class PiAcpAgent implements ACPAgent {
 		});
 
 		this.sessions.register(session);
+		this.registerWithDaemon({
+			sessionId: params.sessionId,
+			piSession,
+			cwd: params.cwd,
+			sessionFile,
+		});
 
 		await this.replaySessionHistory(session, piSession.messages);
 
@@ -574,11 +662,27 @@ export class PiAcpAgent implements ACPAgent {
 	}
 
 	async closeSession(params: CloseSessionRequest): Promise<CloseSessionResponse> {
-		const session = this.sessions.maybeGet(params.sessionId);
-		if (session === undefined) {
+		const local = this.sessions.maybeGet(params.sessionId);
+		// Check daemon registry too: another client may have created the session
+		// and this connection only resumed it; the local PiAcpSession wrapper
+		// existed but the underlying piSession is shared.
+		const inRegistry = this.daemonContext?.sessionRegistry.get(params.sessionId);
+		if (local === undefined && inRegistry === undefined) {
 			throw RequestError.invalidParams(`Unknown sessionId: ${params.sessionId}`);
 		}
-		this.sessions.close(params.sessionId);
+
+		// Release from registry first to decide whether to dispose pi runtime.
+		const release = this.releaseFromDaemon(params.sessionId);
+		if (release.disposed) {
+			// Last holder — full close including pi dispose via SessionManager.
+			this.sessions.close(params.sessionId);
+		} else if (local !== undefined) {
+			// Other clients still hold the session. Drop only this connection's
+			// PiAcpSession wrapper (which holds our own event subscription).
+			// SessionManager.detach removes the entry without disposing the
+			// underlying piSession.
+			this.sessions.detach(params.sessionId);
+		}
 		return {};
 	}
 
@@ -587,7 +691,7 @@ export class PiAcpAgent implements ACPAgent {
 			throw RequestError.invalidParams(`cwd must be an absolute path: ${params.cwd}`);
 		}
 
-		// If the session is already live, reuse it.
+		// If the session is already live in THIS connection, reuse it.
 		const existing = this.sessions.maybeGet(params.sessionId);
 		if (existing !== undefined) {
 			const modes = buildThinkingModes(existing.piSession);
@@ -597,6 +701,35 @@ export class PiAcpAgent implements ACPAgent {
 				modes,
 				models,
 			};
+		}
+
+		// If another connection in the same daemon already holds the session,
+		// attach to it and create a local PiAcpSession wrapping the shared
+		// piSession with this connection's own event subscription + conn.
+		if (this.daemonContext !== undefined) {
+			const registry = this.daemonContext.sessionRegistry;
+			const attached = registry.attach(params.sessionId, this.connectionId);
+			if (attached !== undefined) {
+				const session = new PiAcpSession({
+					sessionId: params.sessionId,
+					cwd: params.cwd,
+					mcpServers: params.mcpServers ?? [],
+					piSession: attached.piSession,
+					conn: this.conn,
+					supportsTerminalOutput: this.clientCapabilities.terminalOutput,
+				});
+				this.sessions.register(session);
+				if (attached.sessionFile !== undefined) {
+					this.sessionPaths.set(params.sessionId, attached.sessionFile);
+				}
+				const modes = buildThinkingModes(attached.piSession);
+				const models = buildModelState(attached.piSession);
+				return {
+					configOptions: buildConfigOptions(modes, models),
+					modes,
+					models,
+				};
+			}
 		}
 
 		// Otherwise, load from disk (same path as loadSession but without replay).
@@ -632,6 +765,12 @@ export class PiAcpAgent implements ACPAgent {
 
 		this.sessions.register(session);
 		this.sessionPaths.set(params.sessionId, sessionFile);
+		this.registerWithDaemon({
+			sessionId: params.sessionId,
+			piSession,
+			cwd: params.cwd,
+			sessionFile,
+		});
 
 		const enableSkillCommands = skillCommandsEnabled(params.cwd);
 		setTimeout(() => {
@@ -700,6 +839,12 @@ export class PiAcpAgent implements ACPAgent {
 		});
 
 		this.sessions.register(session);
+		this.registerWithDaemon({
+			sessionId: newSessionId,
+			piSession,
+			cwd: params.cwd,
+			sessionFile: newSessionFile,
+		});
 
 		const enableSkillCommands = skillCommandsEnabled(params.cwd);
 		setTimeout(() => {

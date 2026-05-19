@@ -1,62 +1,28 @@
 /**
  * Daemon-level shared state injected into per-connection PiAcpAgent instances.
  *
- * Phase 1 lands the interface plus stub implementations. Future phases (PRD-002
- * backends, PRD-003 SessionRegistry / IdleTracker) replace stubs with real
- * implementations registered at daemon startup.
+ * Phase 1 landed the interface + stub IdleTracker.
+ * Phase 2 wires the real SessionRegistry.
+ * Phase 3 will replace IdleTracker.
  */
 
+import { createSessionRegistry, type SessionRegistry } from "@pi-acp/daemon/session-registry";
+
 export interface DaemonContext {
-	/** Cross-window session registry. Phase 2 of PRD-003. */
+	/** Cross-window session registry. PRD-003 FR-5. */
 	sessionRegistry: SessionRegistry;
-	/** Idle-shutdown tracker. Phase 3 of PRD-003. */
+	/** Idle-shutdown tracker. Stub in Phase 1-2; real in Phase 3. */
 	idleTracker: IdleTracker;
 }
 
-/** Phase-1 stub. Replaced in Phase 2 (cross-window session visibility). */
-export interface SessionRegistry {
-	register(entry: SessionEntry): void;
-	release(sessionId: string, connectionId: string): { disposed: boolean } | { unknown: true };
-	listAll(): SessionEntry[];
-	get(sessionId: string): SessionEntry | undefined;
-}
-
-export interface SessionEntry {
-	sessionId: string;
-	ownerConnectionId: string;
-	alsoHeldBy: Set<string>;
-}
-
-/** Phase-1 stub. Replaced in Phase 3 (idle shutdown timer). */
+/** Phase-3 stub. Replaced when idle shutdown lands. */
 export interface IdleTracker {
 	bump(delta: 1 | -1): void;
 	dispose(): void;
 }
 
-export function createStubSessionRegistry(): SessionRegistry {
-	const map = new Map<string, SessionEntry>();
-	return {
-		register(entry) {
-			map.set(entry.sessionId, entry);
-		},
-		release(sessionId, connectionId) {
-			const entry = map.get(sessionId);
-			if (!entry) return { unknown: true };
-			entry.alsoHeldBy.delete(connectionId);
-			if (entry.ownerConnectionId === connectionId && entry.alsoHeldBy.size === 0) {
-				map.delete(sessionId);
-				return { disposed: true };
-			}
-			return { disposed: false };
-		},
-		listAll() {
-			return Array.from(map.values());
-		},
-		get(sessionId) {
-			return map.get(sessionId);
-		},
-	};
-}
+export type { SessionEntry, SessionRegistry } from "@pi-acp/daemon/session-registry";
+export { createSessionRegistry } from "@pi-acp/daemon/session-registry";
 
 export function createNoopIdleTracker(): IdleTracker {
 	return {
@@ -71,7 +37,7 @@ export function createNoopIdleTracker(): IdleTracker {
 
 export function createDaemonContext(): DaemonContext {
 	return {
-		sessionRegistry: createStubSessionRegistry(),
+		sessionRegistry: createSessionRegistry(),
 		idleTracker: createNoopIdleTracker(),
 	};
 }
