@@ -1,10 +1,18 @@
-import { platform } from "node:os";
-import { AgentSideConnection, ndJsonStream } from "@agentclientprotocol/sdk";
-import { PiAcpAgent } from "@pi-acp/acp/agent";
+/**
+ * pi-acp entry point. Dispatches between four modes:
+ *
+ *   --terminal-login                    → foreground pi for interactive auth (v0.5 flow)
+ *   --daemon                            → long-running orchestrator (PRD-003)
+ *   --no-daemon | PI_ACP_NO_DAEMON=1    → v0.5 in-process server (escape hatch)
+ *   (default)                           → thin client; auto-spawns daemon
+ *
+ * ACP transports JSON-RPC NDJSON over stdout. Any stray byte poisons the
+ * protocol stream. Redirect console.{log,info,warn,debug} to stderr at boot
+ * so transitive deps (or our own debug prints) can't corrupt it.
+ */
 
-// ACP transports JSON-RPC NDJSON over stdout. Any stray byte on stdout
-// poisons the protocol stream. Redirect console.{log,info,warn,debug} to
-// stderr so transitive deps (or our own debug prints) can't corrupt it.
+import { platform } from "node:os";
+
 {
 	const toStderr = (...args: unknown[]): void => {
 		process.stderr.write(
@@ -17,11 +25,25 @@ import { PiAcpAgent } from "@pi-acp/acp/agent";
 	console.debug = toStderr;
 }
 
-// Terminal Auth entrypoint: ACP client launches with `--terminal-login`.
-if (process.argv.includes("--terminal-login")) {
+const argv = process.argv.slice(2);
+
+if (argv.includes("--terminal-login")) {
+	await runTerminalLogin();
+} else if (argv.includes("--daemon")) {
+	const { runDaemon } = await import("@pi-acp/daemon/index");
+	await runDaemon();
+} else if (argv.includes("--no-daemon") || process.env["PI_ACP_NO_DAEMON"] === "1") {
+	const { runInProcess } = await import("@pi-acp/runtime/in-process");
+	runInProcess();
+} else {
+	const { runClient } = await import("@pi-acp/client/index");
+	await runClient();
+}
+
+async function runTerminalLogin(): Promise<void> {
 	const { spawnSync } = await import("node:child_process");
 	const isWindows = platform() === "win32";
-	const cmd = process.env.PI_ACP_PI_COMMAND ?? (isWindows ? "pi.cmd" : "pi");
+	const cmd = process.env["PI_ACP_PI_COMMAND"] ?? (isWindows ? "pi.cmd" : "pi");
 	const res = spawnSync(cmd, [], { stdio: "inherit", env: process.env });
 
 	if (res.error && "code" in res.error && res.error.code === "ENOENT") {
@@ -35,61 +57,3 @@ if (process.argv.includes("--terminal-login")) {
 
 	process.exit(typeof res.status === "number" ? res.status : 1);
 }
-
-const input = new WritableStream<Uint8Array>({
-	write(chunk) {
-		return new Promise<void>((resolve) => {
-			if (process.stdout.destroyed || !process.stdout.writable) {
-				resolve();
-				return;
-			}
-			try {
-				process.stdout.write(chunk, () => resolve());
-			} catch {
-				resolve();
-			}
-		});
-	},
-});
-
-const output = new ReadableStream<Uint8Array>({
-	start(controller) {
-		process.stdin.on("data", (chunk: Buffer) => controller.enqueue(new Uint8Array(chunk)));
-		process.stdin.on("end", () => controller.close());
-		process.stdin.on("error", (err) => controller.error(err));
-	},
-});
-
-const stream = ndJsonStream(input, output);
-const agent = new AgentSideConnection((conn) => new PiAcpAgent(conn), stream);
-
-let shuttingDown = false;
-function shutdown() {
-	if (shuttingDown) return;
-	shuttingDown = true;
-	try {
-		if ("agent" in agent) {
-			const inner: unknown = agent.agent;
-			if (
-				typeof inner === "object" &&
-				inner !== null &&
-				"dispose" in inner &&
-				typeof inner.dispose === "function"
-			) {
-				// eslint-disable-next-line typescript-eslint/no-unsafe-call -- runtime-guarded
-				inner.dispose();
-			}
-		}
-	} catch {
-		// best-effort cleanup
-	}
-	process.exit(0);
-}
-
-// Drive shutdown from the connection lifecycle, not from raw stdin events.
-// `AgentSideConnection.closed` resolves on both clean EOF and stream errors.
-void agent.closed.then(shutdown);
-
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
-process.stdout.on("error", () => process.exit(0));
