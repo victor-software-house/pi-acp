@@ -79,4 +79,19 @@ describe("parseClientCapabilities", () => {
 		});
 		expect(flags.gatewayAuth).toBe(false);
 	});
+
+	test("detects fs.readTextFile capability", () => {
+		const flags = parseClientCapabilities({ fs: { readTextFile: true } });
+		expect(flags.fsReadTextFile).toBe(true);
+	});
+
+	test("fsReadTextFile false when fs absent", () => {
+		const flags = parseClientCapabilities({});
+		expect(flags.fsReadTextFile).toBe(false);
+	});
+
+	test("fsReadTextFile false when fs.readTextFile explicitly false", () => {
+		const flags = parseClientCapabilities({ fs: { readTextFile: false } });
+		expect(flags.fsReadTextFile).toBe(false);
+	});
 });

@@ -14,6 +14,8 @@ export interface ClientCapabilityFlags {
 	terminalAuth: boolean;
 	/** Client supports gateway-based authentication. */
 	gatewayAuth: boolean;
+	/** Client supports `fs/read_text_file` requests (PRD-002 §FR-6). */
+	fsReadTextFile: boolean;
 }
 
 /**
@@ -28,7 +30,12 @@ export function parseClientCapabilities(
 	caps: ClientCapabilities | undefined | null,
 ): ClientCapabilityFlags {
 	if (caps === undefined || caps === null) {
-		return { terminalOutput: false, terminalAuth: false, gatewayAuth: false };
+		return {
+			terminalOutput: false,
+			terminalAuth: false,
+			gatewayAuth: false,
+			fsReadTextFile: false,
+		};
 	}
 
 	// _meta is an optional declared property, safe to access with dot
@@ -49,5 +56,8 @@ export function parseClientCapabilities(
 		}
 	}
 
-	return { terminalOutput, terminalAuth, gatewayAuth };
+	// fs.readTextFile is the typed, spec-stable capability surface.
+	const fsReadTextFile = caps.fs?.readTextFile === true;
+
+	return { terminalOutput, terminalAuth, gatewayAuth, fsReadTextFile };
 }
