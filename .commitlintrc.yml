@@ -1,2 +1,6 @@
 extends:
   - "@commitlint/config-conventional"
+rules:
+  # Allow PascalCase, UPPER, etc. in subjects — type names (HttpBackend),
+  # acronyms (HTTPS, SSH, TTL, ACP) are common and meaningful in this repo.
+  subject-case: [0]
