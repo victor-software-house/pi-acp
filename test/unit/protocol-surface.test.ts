@@ -132,18 +132,18 @@ describe("protocol surface: loadSession", () => {
 	});
 });
 
-describe("protocol surface: unstable_closeSession", () => {
+describe("protocol surface: closeSession", () => {
 	test("rejects unknown session", () => {
 		const { agent } = createAgent();
-		expect(agent.unstable_closeSession({ sessionId: "nonexistent" })).rejects.toThrow();
+		expect(agent.closeSession({ sessionId: "nonexistent" })).rejects.toThrow();
 	});
 });
 
-describe("protocol surface: unstable_resumeSession", () => {
+describe("protocol surface: resumeSession", () => {
 	test("rejects non-absolute cwd", () => {
 		const { agent } = createAgent();
 		expect(
-			agent.unstable_resumeSession({ sessionId: "test", cwd: "relative/path" }),
+			agent.resumeSession({ sessionId: "test", cwd: "relative/path" }),
 		).rejects.toThrow();
 	});
 });

@@ -14,9 +14,9 @@ Status of ACP protocol coverage in `pi-acp` as of this refactor.
 | `session/list` | Implemented | Pagination via cursor, title fallback from first message |
 | `session/prompt` | Implemented | Returns `usage` with token counts |
 | `session/cancel` | Implemented | Calls `AgentSession.abort()` |
-| `unstable_closeSession` | Implemented | Disposes targeted session only |
-| `unstable_resumeSession` | Implemented | Reuses live session or reloads from disk |
-| `unstable_forkSession` | Implemented | Uses `SessionManager.forkFrom()` |
+| `session/close` (`closeSession`) | Implemented | Stable in ACP v0.12.2+; disposes targeted session only |
+| `session/resume` (`resumeSession`) | Implemented | Stable in ACP v0.12.2+; reuses live session or reloads from disk |
+| `unstable_forkSession` | Implemented | Preview; uses `SessionManager.forkFrom()` |
 
 ### Configuration
 
