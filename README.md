@@ -7,7 +7,7 @@ ACP ([Agent Client Protocol](https://agentclientprotocol.com/get-started/introdu
 ## Specs and decisions
 
 - [`docs/prd/PRD-001-acp-v013-zed-alignment.md`](docs/prd/PRD-001-acp-v013-zed-alignment.md) — v0.5 release PRD (Shipped).
-- [`docs/prd/PRD-002-portable-runtime.md`](docs/prd/PRD-002-portable-runtime.md) — v0.6 portable runtime + multi-host resource composition (Draft).
+- [`docs/prd/PRD-002-portable-runtime.md`](docs/prd/PRD-002-portable-runtime.md) — v0.6 portable runtime + multi-host resource composition (Substrate Shipped; Phases 8b/9 deferred).
 - [`docs/prd/PRD-003-runtime-daemon.md`](docs/prd/PRD-003-runtime-daemon.md) — v0.6 long-running daemon + thin-client binary (Draft).
 - [`docs/architecture/plan-acp-v013-zed-alignment.md`](docs/architecture/plan-acp-v013-zed-alignment.md) — v0.5 phased implementation plan.
 - [`docs/architecture/plan-portable-runtime.md`](docs/architecture/plan-portable-runtime.md) — v0.6 portable-runtime plan.
@@ -53,6 +53,63 @@ Active development. ACP compliance is improving steadily. Development is centere
   - Built-in adapter commands (see below)
 - Authentication via Terminal Auth (ACP Registry support)
 - Startup info block with pi version and context (configurable via `quietStartup` setting)
+- **Resource composition manifest** (`.pi-acp.yaml`) — PRD-002 §FR-3
+  - Cascade: ACP session params > project `<cwd>/.pi-acp.yaml` > user-global `~/.pi-acp/config.yaml` > synthesized default
+  - Backends: `local`, `ssh` (Bun Shell `$` + ssh self-terminate options), `http` (HTTPS-only fetch + per-URL TTL cache, default 300s)
+  - Merge strategies: `append` (default) or `override-by-name` for skills and prompts
+  - Opt-in diagnostics surface (`diagnostics: true`) — one-line resource summary on first prompt of each session
+- **Cwd-independence modes** (PRD-002 §FR-5)
+  - `local` (default) / `overlay` — ACP `params.cwd` used as session cwd; manifest roots compose
+  - `none` — pi-acp mints an ephemeral tmpdir under `os.tmpdir()/pi-acp-session-*`, cleaned up at session dispose. For one-shot Q&A sessions that shouldn't pollute any project directory.
+- **ACP-FS `read` delegation** (PRD-002 §FR-6) — When the client advertises `clientCapabilities.fs.readTextFile`, pi-acp routes pi's built-in `read` tool through `connection.fs.readTextFile` instead of local disk. Lets Zed Remote read the actual remote workspace files (the ones the user is editing) while pi runs locally.
+
+## Resource composition (`.pi-acp.yaml`)
+
+Drop a `.pi-acp.yaml` at the project root (or `~/.pi-acp/config.yaml` for user-global defaults). Schema version `1`:
+
+```yaml
+version: 1
+mode: local      # local (default) | overlay | none
+mergeStrategy: append   # append | override-by-name
+diagnostics: false      # true: emit a one-line resource summary on first prompt
+
+roots:
+  # Local roots (cwd + optional alt agentDir)
+  - id: project
+    kind: local
+    paths:
+      cwd: .
+      agentDir: ~/.pi/agent
+
+  # Remote files over SSH (operator's ~/.ssh/config honored end-to-end)
+  - id: cvm
+    kind: ssh
+    host: cvm
+    user: varaujo
+    paths:
+      agentsFiles:
+        - /home/varaujo/.pi/agent/AGENTS.md
+        - /workspace/team/SECURITY.md
+      # skills/prompts/extensions over SSH not yet implemented;
+      # declaring paths.skills here emits a diagnostic at session start.
+
+  # Public HTTPS fetch (e.g. team's shared AGENTS file on a public repo)
+  - id: team
+    kind: http
+    baseUrl: https://raw.githubusercontent.com/team/dotfiles/main
+    cache:
+      ttl: 600   # per-URL TTL in seconds; default 300, 0 disables
+    paths:
+      agentsFiles:
+        - AGENTS.md
+```
+
+Cascade precedence (highest first):
+
+1. ACP session params: `params._meta.piAcp.manifest` (inline manifest object OR string path to a YAML file)
+2. Project: `<cwd>/.pi-acp.yaml`
+3. User-global: `~/.pi-acp/config.yaml`
+4. Synthesized default (single implicit local root)
 
 ## Prerequisites
 
@@ -151,7 +208,7 @@ bun run dev          # run from src
 bun run build        # tsdown -> dist/index.mjs
 bun run typecheck    # tsc --noEmit
 bun run lint         # biome + oxlint
-bun test             # 26 tests
+bun test             # 277 tests
 ```
 
 Project layout:
@@ -191,7 +248,7 @@ test/
 ### Not implemented (MAY / client capabilities)
 
 - **`agent_plan`** -- plan updates not emitted before tool execution. pi has no equivalent planning surface.
-- **ACP filesystem delegation** (`fs/read_text_file`, `fs/write_text_file`) -- pi reads/writes locally. Not advertised.
+- **ACP filesystem `write` delegation** (`fs/write_text_file`) -- pi writes locally. Not advertised. `fs/read_text_file` IS routed through ACP when the client advertises the capability (see Features → ACP-FS `read` delegation).
 - **ACP terminal delegation** (`terminal/*`) -- pi executes commands locally. Not advertised.
 
 ### Design decisions
