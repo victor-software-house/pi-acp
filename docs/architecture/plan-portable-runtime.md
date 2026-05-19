@@ -218,19 +218,24 @@ Phases 6–7 can swap order. Phase 8 depends on Phases 4+5. Phase 9 depends on P
 
 **Acceptance**: Manifests at all three cascade levels are correctly resolved. Multiple `local` sources can coexist and contribute resources. Tests pass.
 
-### Phase 3 — SSH backend
+### Phase 6 — SSH backend *(shipped)*
 
-1. `src/resources/sources/ssh.ts` — `SshBackend`. Spawn `ssh` subprocess via `child_process.spawn`. Hard 5s timeout per op.
-2. List operations: `ssh <conn> find <path> -maxdepth 1 -type f -printf '%f\\n'`.
-3. Read operations: `ssh <conn> cat <path>`.
-4. Skill loading: ls the skill dir, then read `SKILL.md` + sibling files per skill.
-5. Tests in `test/unit/resources/sources-ssh.test.ts`:
-   - Fake ssh fixture (mock `child_process.spawn` via dependency injection).
-   - Timeout path produces diagnostic.
-   - Successful read returns content.
-   - Listing returns expected file names.
+> *Originally tracked here as "Phase 3"; renumbered to Phase 6 in §Implementation Order to align with PRD-003's daemon-foundation phase numbering.*
 
-**Acceptance**: SSH source can contribute skills, prompts, and AGENTS files. Failure modes (timeout, non-zero exit, missing path) surface as diagnostics, not exceptions.
+1. `src/resources/sources/ssh.ts` — `SshBackend`. `Bun.spawn(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=N", target, "--", "cat", path])` array-form (injection-safe argv, no shell). Per-operation 5s default timeout via Bun.spawn's native `timeout` + `killSignal: "SIGKILL"`. Bun Shell `$` is NOT used because it lacks a timeout primitive — see `bun-shell` skill §"When you still need Bun.spawn".
+2. Read operations: `ssh <conn> -- cat <path>`. Argv passes through verbatim.
+3. **Scope**: AGENTS files via explicit `paths.agentsFiles` list only. Skills, prompts, and extensions over SSH stay deferred (no remote `find` discovery in this phase); declaring `paths.skills` / `.prompts` / `.extensions` surfaces one `"not yet implemented"` diagnostic per kind via `getSkills()` aggregation.
+4. `sshCommand?` constructor option allows tests to inject an absolute-path Bash shim, because Bun.spawn's `argv[0]` lookup does NOT honor runtime `process.env.PATH` mutations.
+5. `ResourceSource.getExtensions` was made optional in this phase; `VirtualResourceLoader` routes extensions through the primary `LocalBackend` only.
+6. Manifest roots with `kind: "ssh"` materialize into `SshBackend` instances in `PiAcpAgent.buildResourceLoader`.
+7. Tests in `test/unit/ssh-backend.test.ts` (6 cases):
+   - cat round-trip + ssh:// path qualification.
+   - Non-zero ssh exit surfaces as warning diagnostic without throwing.
+   - Unsupported-kind diagnostics when `paths.skills` / `.prompts` / `.extensions` declared.
+   - Timeout aborts at `timeoutMs` (shim uses `exec sleep` so SIGKILL hits the actual blocker, not the bash wrapper).
+   - Default getters return empty when no agentsFiles declared.
+
+**Acceptance**: SSH source contributes AGENTS files from a remote host. Failure modes (timeout, non-zero exit, missing path) surface as diagnostics, not exceptions. **Shipped on `feat/v0.6-foundation-refactor` (commits `2cdc385`, `b13ddde`, `5869a40`).**
 
 ### Phase 4 — HTTP backend
 
