@@ -94,4 +94,14 @@ describe("parseClientCapabilities", () => {
 		const flags = parseClientCapabilities({ fs: { readTextFile: false } });
 		expect(flags.fsReadTextFile).toBe(false);
 	});
+
+	test("detects terminal capability", () => {
+		const flags = parseClientCapabilities({ terminal: true });
+		expect(flags.terminal).toBe(true);
+	});
+
+	test("terminal false when absent", () => {
+		const flags = parseClientCapabilities({});
+		expect(flags.terminal).toBe(false);
+	});
 });

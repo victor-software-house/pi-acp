@@ -42,11 +42,13 @@ import {
 	type AgentSession,
 	type CreateAgentSessionResult,
 	createAgentSession,
+	createBashToolDefinition,
 	createReadToolDefinition,
 	getAgentDir,
 	SessionManager as PiSessionManager,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { createAcpBashOperations } from "@pi-acp/acp/acp-bash-operations";
 import { createAcpReadOperations } from "@pi-acp/acp/acp-read-operations";
 import { buildAuthMethods } from "@pi-acp/acp/auth";
 import { detectAuthError } from "@pi-acp/acp/auth-required";
@@ -171,6 +173,7 @@ export class PiAcpAgent implements ACPAgent {
 		terminalAuth: false,
 		gatewayAuth: false,
 		fsReadTextFile: false,
+		terminal: false,
 	};
 
 	private readonly daemonContext: import("@pi-acp/daemon/context").DaemonContext | undefined;
@@ -350,47 +353,68 @@ export class PiAcpAgent implements ACPAgent {
 	}
 
 	/**
-	 * PRD-002 §FR-6 — `read` tool ACP-FS delegation overlay.
+	 * PRD-002 §FR-6 + §FR-6.5 — tool overrides for ACP-FS read + ACP terminal bash.
 	 *
-	 * When the client advertises `fs.readTextFile`, we override pi's
-	 * built-in `read` with a custom `read` tool that proxies to
-	 * `connection.fs.readTextFile`. The allowlist MUST include "read" so
-	 * pi's customTool registration loop (which filters by name) can
-	 * register the override; the override then shadows the builtin via
-	 * the tool-definition `Map.set` path inside AgentSession.
+	 * For each tool we override, the allowlist MUST include the original
+	 * tool name so pi's customTool registration loop (which filters by
+	 * name) can register the override; the override then shadows the
+	 * builtin via the tool-definition `Map.set` path inside AgentSession
+	 * (verified against pi source — agent-session.js:1811).
 	 *
-	 * The sessionId ref is mutated by the caller right after
-	 * `createAgentSession` returns, before any model turn — the tool
-	 * isn't invoked until prompt-time, so the late binding is safe.
+	 * SessionId binding is late: pi mints the id inside `createAgentSession`
+	 * (after `customTools` is built), so we share a single mutable ref
+	 * across all overrides. The caller mutates `sessionIdRef.current`
+	 * right after createAgentSession returns, before any model turn — the
+	 * tools aren't invoked until prompt-time, so the late binding is safe.
 	 *
-	 * Returns `null` when the client doesn't advertise the capability;
-	 * callers then skip the overlay and pi's built-in `read` handles
-	 * everything locally.
+	 * Returns `null` when neither capability is advertised; callers skip
+	 * the overlay and pi's built-in tools handle everything locally.
 	 */
-	private buildAcpReadOverlay(cwd: string): {
+	private buildAcpToolOverlay(cwd: string): {
 		sessionIdRef: { current: string };
 		tools: string[];
 		customTools: ToolDefinition[];
 	} | null {
-		if (!this.clientCapabilities.fsReadTextFile) return null;
+		const wantRead = this.clientCapabilities.fsReadTextFile;
+		const wantBash = this.clientCapabilities.terminal;
+		if (!wantRead && !wantBash) return null;
+
 		const sessionIdRef = { current: "" };
-		const operations = createAcpReadOperations({
-			conn: this.conn,
-			getSessionId: () => sessionIdRef.current,
-		});
-		// `createReadToolDefinition` returns a narrowly-typed ToolDefinition
-		// (with the concrete read-tool argument schema). `customTools[]`
-		// expects the wide `ToolDefinition<TSchema, unknown>` form; the
-		// variance gap is on `renderCall`'s `args` parameter (contravariant
-		// position). Pi's runtime treats every customTool through the
-		// unknown-args path, so widening is safe — but TS's
-		// exactOptionalPropertyTypes still flags it. The cast is intentional.
-		// oxlint-disable-next-line typescript/no-unsafe-type-assertion
-		const readToolDef = createReadToolDefinition(cwd, { operations }) as unknown as ToolDefinition;
+		const customTools: ToolDefinition[] = [];
+
+		if (wantRead) {
+			const operations = createAcpReadOperations({
+				conn: this.conn,
+				getSessionId: () => sessionIdRef.current,
+			});
+			// Variance: `createReadToolDefinition` returns a narrowly-typed
+			// ToolDefinition; `customTools[]` expects the wide form. Pi's
+			// runtime treats every customTool through the unknown-args path,
+			// so widening is safe. TS's exactOptionalPropertyTypes flags it
+			// because `renderCall.args` is contravariant.
+			// oxlint-disable-next-line typescript/no-unsafe-type-assertion
+			const readToolDef = createReadToolDefinition(cwd, {
+				operations,
+			}) as unknown as ToolDefinition;
+			customTools.push(readToolDef);
+		}
+
+		if (wantBash) {
+			const operations = createAcpBashOperations({
+				conn: this.conn,
+				getSessionId: () => sessionIdRef.current,
+			});
+			// oxlint-disable-next-line typescript/no-unsafe-type-assertion
+			const bashToolDef = createBashToolDefinition(cwd, {
+				operations,
+			}) as unknown as ToolDefinition;
+			customTools.push(bashToolDef);
+		}
+
 		return {
 			sessionIdRef,
 			tools: ["read", "bash", "edit", "write", "grep", "find", "ls"],
-			customTools: [readToolDef],
+			customTools,
 		};
 	}
 
@@ -462,14 +486,14 @@ export class PiAcpAgent implements ACPAgent {
 				}).text
 			: "";
 
-		const acpReadOverlay = this.buildAcpReadOverlay(effectiveCwd);
+		const acpToolOverlay = this.buildAcpToolOverlay(effectiveCwd);
 		let result: CreateAgentSessionResult;
 		try {
 			result = await createAgentSession({
 				cwd: effectiveCwd,
 				resourceLoader,
-				...(acpReadOverlay
-					? { tools: acpReadOverlay.tools, customTools: acpReadOverlay.customTools }
+				...(acpToolOverlay
+					? { tools: acpToolOverlay.tools, customTools: acpToolOverlay.customTools }
 					: {}),
 			});
 		} catch (e: unknown) {
@@ -481,8 +505,8 @@ export class PiAcpAgent implements ACPAgent {
 		}
 
 		const piSession = result.session;
-		if (acpReadOverlay !== null) {
-			acpReadOverlay.sessionIdRef.current = piSession.sessionManager.getSessionId();
+		if (acpToolOverlay !== null) {
+			acpToolOverlay.sessionIdRef.current = piSession.sessionManager.getSessionId();
 		}
 
 		const availableModels = piSession.modelRegistry.getAvailable();
@@ -823,7 +847,7 @@ export class PiAcpAgent implements ACPAgent {
 			throw RequestError.invalidParams(`Unknown sessionId: ${params.sessionId}`);
 		}
 
-		const acpReadOverlay = this.buildAcpReadOverlay(params.cwd);
+		const acpToolOverlay = this.buildAcpToolOverlay(params.cwd);
 		let result: CreateAgentSessionResult;
 		try {
 			const sm = PiSessionManager.open(sessionFile);
@@ -834,8 +858,8 @@ export class PiAcpAgent implements ACPAgent {
 				cwd: params.cwd,
 				sessionManager: sm,
 				resourceLoader,
-				...(acpReadOverlay
-					? { tools: acpReadOverlay.tools, customTools: acpReadOverlay.customTools }
+				...(acpToolOverlay
+					? { tools: acpToolOverlay.tools, customTools: acpToolOverlay.customTools }
 					: {}),
 			});
 		} catch (e: unknown) {
@@ -846,8 +870,8 @@ export class PiAcpAgent implements ACPAgent {
 		}
 
 		const piSession = result.session;
-		if (acpReadOverlay !== null) {
-			acpReadOverlay.sessionIdRef.current = piSession.sessionManager.getSessionId();
+		if (acpToolOverlay !== null) {
+			acpToolOverlay.sessionIdRef.current = piSession.sessionManager.getSessionId();
 		}
 
 		const session = new PiAcpSession({
@@ -973,7 +997,7 @@ export class PiAcpAgent implements ACPAgent {
 			throw RequestError.invalidParams(`Unknown sessionId: ${params.sessionId}`);
 		}
 
-		const acpReadOverlay = this.buildAcpReadOverlay(params.cwd);
+		const acpToolOverlay = this.buildAcpToolOverlay(params.cwd);
 		let result: CreateAgentSessionResult;
 		try {
 			const sm = PiSessionManager.open(sessionFile);
@@ -984,8 +1008,8 @@ export class PiAcpAgent implements ACPAgent {
 				cwd: params.cwd,
 				sessionManager: sm,
 				resourceLoader,
-				...(acpReadOverlay
-					? { tools: acpReadOverlay.tools, customTools: acpReadOverlay.customTools }
+				...(acpToolOverlay
+					? { tools: acpToolOverlay.tools, customTools: acpToolOverlay.customTools }
 					: {}),
 			});
 		} catch (e: unknown) {
@@ -996,8 +1020,8 @@ export class PiAcpAgent implements ACPAgent {
 		}
 
 		const piSession = result.session;
-		if (acpReadOverlay !== null) {
-			acpReadOverlay.sessionIdRef.current = piSession.sessionManager.getSessionId();
+		if (acpToolOverlay !== null) {
+			acpToolOverlay.sessionIdRef.current = piSession.sessionManager.getSessionId();
 		}
 
 		const session = new PiAcpSession({
@@ -1053,7 +1077,7 @@ export class PiAcpAgent implements ACPAgent {
 			throw RequestError.invalidParams(`Unknown sessionId: ${params.sessionId}`);
 		}
 
-		const acpReadOverlay = this.buildAcpReadOverlay(params.cwd);
+		const acpToolOverlay = this.buildAcpToolOverlay(params.cwd);
 		let result: CreateAgentSessionResult;
 		try {
 			const sm = PiSessionManager.forkFrom(sourceFile, params.cwd);
@@ -1064,8 +1088,8 @@ export class PiAcpAgent implements ACPAgent {
 				cwd: params.cwd,
 				sessionManager: sm,
 				resourceLoader,
-				...(acpReadOverlay
-					? { tools: acpReadOverlay.tools, customTools: acpReadOverlay.customTools }
+				...(acpToolOverlay
+					? { tools: acpToolOverlay.tools, customTools: acpToolOverlay.customTools }
 					: {}),
 			});
 		} catch (e: unknown) {
@@ -1078,8 +1102,8 @@ export class PiAcpAgent implements ACPAgent {
 		const piSession = result.session;
 
 		const newSessionId = piSession.sessionManager.getSessionId();
-		if (acpReadOverlay !== null) {
-			acpReadOverlay.sessionIdRef.current = newSessionId;
+		if (acpToolOverlay !== null) {
+			acpToolOverlay.sessionIdRef.current = newSessionId;
 		}
 		const newSessionFile = piSession.sessionManager.getSessionFile();
 		if (newSessionFile !== undefined) {

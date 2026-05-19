@@ -22,6 +22,14 @@ export interface ClientCapabilityFlags {
 	gatewayAuth: boolean;
 	/** Client supports `fs/read_text_file` requests (PRD-002 §FR-6). */
 	fsReadTextFile: boolean;
+	/**
+	 * Client supports all `terminal/*` methods (createTerminal, terminalOutput,
+	 * waitForTerminalExit, releaseTerminal, killTerminal). When true, pi-acp
+	 * overrides pi's built-in `bash` tool with an ACP-routed implementation
+	 * so commands run on the CLIENT'S machine (e.g., Zed Remote routes
+	 * terminal/* to the remote, making `bash` land on the remote workspace).
+	 */
+	terminal: boolean;
 }
 
 export function parseClientCapabilities(
@@ -48,5 +56,6 @@ export function parseClientCapabilities(
 		terminalAuth: metaIsObject && meta["terminal-auth"] === true,
 		gatewayAuth: authMetaIsObject && authMeta["gateway"] === true,
 		fsReadTextFile: safe.fs?.readTextFile === true,
+		terminal: safe.terminal === true,
 	};
 }

@@ -19,17 +19,17 @@ describe("ExtMethodDispatcher built-in handlers", () => {
 	test("pi-acp/ping returns ok + ts", async () => {
 		const d = makeDispatcher();
 		const r = await d.handleRequest("pi-acp/ping", {});
-		expect(r.ok).toBe(true);
-		expect(typeof r.ts).toBe("number");
+		expect(r["ok"]).toBe(true);
+		expect(typeof r["ts"]).toBe("number");
 	});
 
 	test("pi-acp/runtime-info returns version/uptime/sessionCount", async () => {
 		const d = makeDispatcher();
 		const r = await d.handleRequest("pi-acp/runtime-info", {});
-		expect(r.version).toBe("0.13.1-test");
-		expect(typeof r.uptimeMs).toBe("number");
-		expect(r.uptimeMs).toBeGreaterThanOrEqual(1000);
-		expect(r.sessionCount).toBe(3);
+		expect(r["version"]).toBe("0.13.1-test");
+		expect(typeof r["uptimeMs"]).toBe("number");
+		expect(r["uptimeMs"] as number).toBeGreaterThanOrEqual(1000);
+		expect(r["sessionCount"]).toBe(3);
 	});
 });
 
@@ -56,12 +56,13 @@ describe("ExtMethodDispatcher request routing", () => {
 describe("ExtMethodDispatcher notification routing", () => {
 	test("registered notification handler is invoked with params", async () => {
 		const d = makeDispatcher();
-		let captured: Record<string, unknown> | null = null;
+		const captured: Record<string, unknown>[] = [];
 		d.registerNotification("test/event", (params) => {
-			captured = params;
+			captured.push(params);
 		});
 		await d.handleNotification("test/event", { fired: true });
-		expect(captured).toEqual({ fired: true });
+		expect(captured).toHaveLength(1);
+		expect(captured[0]).toEqual({ fired: true });
 	});
 
 	test("unknown notification is silently ignored (no throw)", async () => {
