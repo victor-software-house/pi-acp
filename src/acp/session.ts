@@ -275,6 +275,20 @@ export class SessionManager {
 		if (!s) throw RequestError.invalidParams(`Unknown sessionId: ${sessionId}`);
 		return s;
 	}
+
+	size(): number {
+		return this.sessions.size;
+	}
+
+	values(): IterableIterator<PiAcpSession> {
+		return this.sessions.values();
+	}
+
+	/** First registered session, or undefined. Order = insertion order. */
+	first(): PiAcpSession | undefined {
+		const it = this.sessions.values().next();
+		return it.done === true ? undefined : it.value;
+	}
 }
 
 // ---------------------------------------------------------------------------

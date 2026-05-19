@@ -54,6 +54,7 @@ import {
 	type ClientCapabilityFlags,
 	parseClientCapabilities,
 } from "@pi-acp/acp/client-capabilities";
+import { ExtMethodDispatcher } from "@pi-acp/acp/ext-methods";
 import { resolveModelPreference } from "@pi-acp/acp/model-alias";
 import { skillCommandsEnabled } from "@pi-acp/acp/pi-settings";
 import {
@@ -175,6 +176,8 @@ export class PiAcpAgent implements ACPAgent {
 	private readonly daemonContext: import("@pi-acp/daemon/context").DaemonContext | undefined;
 	/** Unique ID for this ACP connection. Used as the ownership key in the daemon SessionRegistry. */
 	private readonly connectionId = randomUUID();
+	private readonly extMethods: ExtMethodDispatcher;
+	private readonly startedAt = Date.now();
 
 	dispose(): void {
 		// On connection close, release every session this connection owned or
@@ -202,6 +205,22 @@ export class PiAcpAgent implements ACPAgent {
 	) {
 		this.conn = conn;
 		this.daemonContext = daemonContext;
+		this.extMethods = new ExtMethodDispatcher({
+			version: pkgJson.version,
+			startedAt: this.startedAt,
+			sessionCount: () => this.sessions.size(),
+		});
+	}
+
+	async extMethod(
+		method: string,
+		params: Record<string, unknown>,
+	): Promise<Record<string, unknown>> {
+		return this.extMethods.handleRequest(method, params);
+	}
+
+	async extNotification(method: string, params: Record<string, unknown>): Promise<void> {
+		await this.extMethods.handleNotification(method, params);
 	}
 
 	private registerWithDaemon(input: {
