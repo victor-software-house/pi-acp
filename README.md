@@ -36,7 +36,8 @@ Active development. ACP compliance is improving steadily. Development is centere
   - pi manages sessions in `~/.pi/agent/sessions/...`
   - `session/list` with title fallback from first user message
   - `session/load` replays structured history (text, thinking, tool calls)
-  - `unstable_closeSession`, `unstable_resumeSession`, `unstable_forkSession`
+  - `closeSession`, `resumeSession` (stable in ACP v0.12.2+)
+  - `unstable_forkSession` (preview)
   - Sessions can be resumed in both `pi` CLI and ACP clients
 - Usage and cost tracking
   - `usage_update` emitted after each agent turn with context size and cost

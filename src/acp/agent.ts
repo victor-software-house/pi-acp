@@ -575,7 +575,7 @@ export class PiAcpAgent implements ACPAgent {
 		};
 	}
 
-	async unstable_closeSession(params: CloseSessionRequest): Promise<CloseSessionResponse> {
+	async closeSession(params: CloseSessionRequest): Promise<CloseSessionResponse> {
 		const session = this.sessions.maybeGet(params.sessionId);
 		if (session === undefined) {
 			throw RequestError.invalidParams(`Unknown sessionId: ${params.sessionId}`);
@@ -584,7 +584,7 @@ export class PiAcpAgent implements ACPAgent {
 		return {};
 	}
 
-	async unstable_resumeSession(params: ResumeSessionRequest): Promise<ResumeSessionResponse> {
+	async resumeSession(params: ResumeSessionRequest): Promise<ResumeSessionResponse> {
 		if (!isAbsolute(params.cwd)) {
 			throw RequestError.invalidParams(`cwd must be an absolute path: ${params.cwd}`);
 		}
