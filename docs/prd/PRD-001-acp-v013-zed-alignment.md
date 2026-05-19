@@ -1,11 +1,13 @@
 ---
 title: "pi-acp v0.5: ACP v0.13 + Earendil pi Alignment"
 prd: PRD-001
-status: Draft
+status: Shipped
 owner: "Victor Araujo"
 issue: "N/A"
 date: 2026-05-18
-version: "1.1"
+version: "1.2"
+shipped_version: "0.5.0"
+shipped_pr: "https://github.com/victor-software-house/pi-acp/pull/2"
 ---
 
 # PRD: pi-acp v0.5: ACP v0.13 + Earendil pi Alignment
@@ -97,7 +99,7 @@ This PRD scopes `v0.5.0` — a focused alignment release. It does **not** revisi
 5. **Runtime hardening** —
    - Redirect `console.{log,info,warn,debug}` to `console.error` at the top of `src/index.ts`.
    - Replace `process.stdin.on("end", shutdown)` + `process.stdin.on("close", shutdown)` with `connection.closed.then(shutdown)` (more idiomatic; same behavior).
-6. **Salvage status messages** — port pi auto-retry / auto-compaction event surfacing from svkozak `6b1db2c`, `5c4de3f`, `5a6baaf`. Verify against current pi event types; emit as `session/update` content blocks.
+6. ~~**Salvage status messages** — port pi auto-retry / auto-compaction event surfacing.~~ **Descoped from v0.5.** Verified pi `0.75.3` does emit `auto_retry_start/end` and `compaction_start/end` events, but ACP has no first-class status channel. The available surfaces (`agent_message_chunk` pollutes the reply stream, `agent_thought_chunk` is semantically reasoning output, synthetic `tool_call` is a workaround) all have UX downsides without a Zed rendering contract. Reopen for v0.6 if/when ACP gains a notification primitive. Tracked in PRD-002.
 7. **Update terminal-login error message** — the user-facing string in `src/index.ts` points at `@mariozechner/pi-coding-agent`; update to `@earendil-works/pi-coding-agent`.
 8. **Docs migration** — establish `docs/prd/`, `docs/adr/`, `docs/architecture/`; delete root planning files; preserve technical content from `docs/engineering/*` by moving under `docs/architecture/`.
 
@@ -251,9 +253,17 @@ And no orphan node/bun process remains
 
 - `src/index.ts` — console redirect block; `connection.closed.then(shutdown)`; `shuttingDown` guard.
 
-### FR-6: Surface pi auto-retry and auto-compaction status
+### FR-6: Surface pi auto-retry and auto-compaction status — **DESCOPED**
 
-Pi emits internal events when (a) the model rate-limits and pi auto-retries, and (b) when pi auto-compacts conversation context. The fork currently drops these. Subscribe in `PiAcpSession` and emit `session/update` notifications with appropriate content (status string + `_meta` indicating event source). Pattern ported from svkozak `6b1db2c`, `5c4de3f`, `5a6baaf`.
+**Status:** Descoped from v0.5. Reopened in PRD-002 once an ACP-portable surface is available.
+
+Pi `0.75.3` does emit `auto_retry_start`, `auto_retry_end`, `compaction_start`, `compaction_end` events on `AgentSession.subscribe`. The reason FR-6 was descoped is on the receiver side, not the source: ACP `v0.13.2` has no first-class status / notification primitive. The three candidate surfaces are all wrong:
+
+- `agent_message_chunk`: pollutes the assistant's reply stream — user sees "pi: auto-retry" interleaved with model text.
+- `agent_thought_chunk`: semantically reasoning output, not agent-side meta-activity.
+- Synthetic `tool_call`: misuses the tool-call surface for non-tool events.
+
+The current filter in `src/acp/session.ts` `isAgentEvent` continues to drop these events. Decision made during Phase 3 implementation, captured in the v0.5 release PR description and CHANGELOG.
 
 **Acceptance criteria:**
 
@@ -446,13 +456,17 @@ And docs/architecture/ contains plan-acp-v013-zed-alignment.md, acp-conformance.
 
 ## 11. Rollout Plan
 
-1. **Phase 0 — Docs.** This PRD + five ADRs + plan land on a feature branch. No code changes yet. Doc reviewers can challenge scope before implementation begins.
-2. **Phase 1 — Toolchain.** SDK bump + pi runtime migration (FR-1, FR-2). One PR. Type-check passes, smoke test passes.
-3. **Phase 2 — Stabilize.** Drop `unstable_` from `resumeSession`, `closeSession` (FR-3). One PR. Tests updated.
-4. **Phase 3 — Auth + status.** Reactive auth classification (FR-4) + auto-retry/auto-compaction status surfacing (FR-6). One PR. New test coverage.
-5. **Phase 4 — Hardening.** Console redirect + connection.closed shutdown (FR-5). Small PR.
-6. **Cut `v0.5.0`.** CHANGELOG entry summarizes phases.
-7. **Post-release:** open coordination issue with svkozak about ACP registry entry; open MCP-wiring tracking issue against upstream pi.
+1. **Phase 0 — Docs.** Shipped at `eac363a` (merged via PR #1).
+2. **Phase 1 — Toolchain (FR-1, FR-2).** Shipped at `52b1626`. SDK `0.16.1 → ^0.22.1`; pi `@mariozechner/* ^0.62.0 → @earendil-works/* ^0.75.3`; `engines.node >= 24`; build target `node24`. Typecheck clean; 186/186 tests pass.
+3. **Phase 2 — Stabilize (FR-3).** Shipped at `d53ccfc`. `unstable_closeSession → closeSession`, `unstable_resumeSession → resumeSession`. `unstable_forkSession` stays prefixed (verified still preview in SDK v0.22.1 source).
+4. **Phase 3 — Auth + status (FR-4 only; FR-6 descoped).** Shipped at `750dfd6`. Deleted `src/pi-auth/status.ts` and `hasPiAuthConfigured` env-sniffing. Reactive path: `createAgentSession` throws → `detectAuthError`; `modelRegistry.getAvailable().length === 0 → AUTH_REQUIRED`.
+5. **Phase 4 — Hardening (FR-5).** Shipped at `97c82da`. `console.{log,info,warn,debug}` redirected to stderr at boot; `AgentSideConnection.closed.then(shutdown)` replaces raw stdin listeners; `shuttingDown` guard.
+6. **Phase 5 — Release.** PR #2 (https://github.com/victor-software-house/pi-acp/pull/2) open with all four commits; semantic-release will tag `v0.5.0` on merge.
+7. **Post-release:**
+   - Zed dev-box smoke test (full session flow) — required before tagging.
+   - Coordination with svkozak about ACP registry entry — issue pending.
+   - MCP-wiring tracking issue against upstream pi — issue pending.
+   - PRD-002 portable runtime work (multi-host resources, ACP-FS delegation, `import_resource` tool, cwd-independence modes).
 
 ---
 
@@ -460,13 +474,13 @@ And docs/architecture/ contains plan-acp-v013-zed-alignment.md, acp-conformance.
 
 | # | Question | Owner | Due | Status |
 |---|----------|-------|-----|--------|
-| Q1 | Does pi `0.75.3` event-shape break the translate layer beyond the scope rename? | Victor | Phase 1 PR | Open |
-| Q2 | Should we bump `engines.node` to `>=24` to match pi runtime, or stay on `>=20` for broader install compat? | Victor | Phase 1 PR | **Resolved:** `engines.node >= 24` is a hard requirement. Matches pi `0.75.3` constraint. |
-| Q3 | Is `forkSession` stable in `@agentclientprotocol/sdk@v0.22.1`? | Victor | Phase 2 PR | Open |
-| Q4 | Should pi-acp continue advertising `modes` alongside `sessionConfigOptions` for back-compat? | Victor | Phase 2 PR | Open — lean yes (spec note explicitly recommends advertising both during the deprecation window). |
-| Q5 | Do auto-retry and auto-compaction events exist in pi `0.75.3` event types, or did the event names change since svkozak ported them at pi `0.6x`? | Victor | Phase 3 PR | Open |
+| Q1 | Does pi `0.75.3` event-shape break the translate layer beyond the scope rename? | Victor | Phase 1 PR | **Resolved:** No breakage. Tests passed without translate-layer changes. Pi SDK kept the public surface stable across `0.62 → 0.75`. |
+| Q2 | Should we bump `engines.node` to `>=24` to match pi runtime, or stay on `>=20` for broader install compat? | Victor | Phase 1 PR | **Resolved:** `engines.node >= 24` is a hard requirement. Matches pi `0.75.3` constraint. Build target raised to `node24`. |
+| Q3 | Is `forkSession` stable in `@agentclientprotocol/sdk@v0.22.1`? | Victor | Phase 2 PR | **Resolved:** Still unstable. Verified in SDK source — `unstable_forkSession` is the only available name in `v0.22.1`. Handler stays prefixed; `sessionCapabilities.fork: {}` advertisement unchanged. |
+| Q4 | Should pi-acp continue advertising `modes` alongside `sessionConfigOptions` for back-compat? | Victor | Phase 2 PR | **Resolved:** Yes. Both stay advertised; older clients use `modes`, newer use `configOptions`. No deprecation pressure yet. |
+| Q5 | Do auto-retry and auto-compaction events exist in pi `0.75.3` event types, or did the event names change since svkozak ported them at pi `0.6x`? | Victor | Phase 3 PR | **Resolved:** Events exist. `auto_retry_start`, `auto_retry_end`, `compaction_start`, `compaction_end` are in `AgentSessionEvent` at pi `0.75.3`. FR-6 descoped because of the ACP-side absence of a status surface, not the pi-side absence of events. |
 | Q6 | Replace svkozak in the ACP registry or coexist? | Victor | Post-release | Open — outreach required. |
-| Q7 | Move pi-acp toolchain from bun + public npm to pnpm + GitHub Packages per VSH baseline? | Victor | Future | Open — separate ADR (ADR-0006, future). |
+| Q7 | Move pi-acp toolchain from bun + public npm to pnpm + GitHub Packages per VSH baseline? | Victor | Future | Open — separate ADR (future, slot not yet numbered). |
 
 ---
 
@@ -489,20 +503,21 @@ And docs/architecture/ contains plan-acp-v013-zed-alignment.md, acp-conformance.
 |------|--------|--------|
 | 2026-05-18 | Initial draft (v1.0) — over-scoped FR-4/5/6 against fork's actual state | Victor |
 | 2026-05-18 | v1.1 — corrected scope after reading legacy `PLAN.md`/`TODO.md`/`GAPS.md`. v0.3.0 conformance work moved to Out-of-scope (ratified in ADR-0004). Added FR-4 reactive auth classification, FR-6 auto-retry/auto-compaction status. | Victor |
+| 2026-05-19 | v1.2 — implementation complete. Status → Shipped. Phases 1-5 commit SHAs recorded. FR-6 descoped (no ACP rendering target). Q1, Q3, Q4, Q5 resolved. Post-release follow-ups now include PRD-002 (portable runtime). | Victor |
 
 ---
 
 ## 15. Verification (Appendix)
 
-Post-implementation checklist:
+Post-implementation checklist (status as of v1.2 update):
 
-1. `cat package.json | grep agentclientprotocol/sdk` shows `^0.22.1`.
-2. `grep -r "@mariozechner" .` returns no matches outside `node_modules/`.
-3. `grep -r "unstable_resumeSession\|unstable_closeSession" src/` returns no matches.
-4. `grep -r "hasPiAuthConfigured" src/ test/` returns no matches; `src/pi-auth/status.ts` is deleted.
-5. `node -e 'process.stdout.write = (chunk) => { JSON.parse(chunk.toString()); }' && bun src/index.ts < fixture-session.ndjson` — every stdout line is valid JSON-RPC.
-6. Close stdin to a running pi-acp process — process exits within 1 second; no orphan node/bun process remains in `ps`.
-7. Launch Zed with `agent_servers.Pi.command` pointing at the new bin; run an unauthenticated session — Zed shows the Authenticate banner via the reactive auth gate.
-8. Trigger an auto-retry condition (rate-limit the model API) — Zed shows a status update with "pi: auto-retry".
-9. `ls docs/` shows `prd/`, `adr/`, `architecture/`. `ls docs/engineering/` returns "No such file or directory". `ls *.md | grep -E '^(PLAN|ROADMAP|TODO|GAPS)\.md$'` returns nothing.
-10. CI passes on a fresh clone: `bun install && bun run typecheck && bun run lint && bun test && bun run build`.
+1. ✔ `cat package.json | grep agentclientprotocol/sdk` shows `^0.22.1`.
+2. ✔ `grep -r "@mariozechner" src/ test/` returns no matches.
+3. ✔ `grep -r "unstable_resumeSession\|unstable_closeSession" src/` returns no matches.
+4. ✔ `grep -r "hasPiAuthConfigured" src/ test/` returns no matches; `src/pi-auth/status.ts` is deleted.
+5. ✔ Smoke-tested: piping a single ACP request through `node dist/index.mjs` returns a single valid JSON-RPC frame on stdout, nothing else.
+6. ✔ Closing stdin terminates the process via `AgentSideConnection.closed.then(shutdown)`; SIGINT/SIGTERM also handled; `shuttingDown` guard prevents double-dispose.
+7. ? Zed banner via reactive auth gate — **pending dev-box smoke**.
+8. ✘ Auto-retry status surface — **descoped (FR-6)**. Events filtered as before.
+9. ✔ `ls docs/` shows `prd/`, `adr/`, `architecture/`. Root planning files removed.
+10. ✔ CI green: typecheck, lint, 186/186 tests, build all pass.
