@@ -3,7 +3,8 @@ title: "pi-acp v0.5: ACP v0.13 + Earendil pi Alignment"
 prd: "PRD-001-acp-v013-zed-alignment"
 date: 2026-05-18
 author: "Victor Araujo"
-status: Draft
+status: Shipped
+shipped_pr: "https://github.com/victor-software-house/pi-acp/pull/2"
 ---
 
 # Plan: pi-acp v0.5 — ACP v0.13 + Earendil pi Alignment
@@ -130,16 +131,16 @@ These are decisions ratified by ADR-0004 and earlier work. Implementation phases
 
 ## Implementation Order
 
-| Phase | Component | Dependencies | Estimated Scope |
-|-------|-----------|-------------|-----------------|
-| 0 — Docs | New `docs/{prd,adr,architecture}/`; delete root planning files; update README | None | M |
-| 1 — Toolchain | ACP SDK bump + pi runtime migration | Phase 0 (review baseline) | L |
-| 2 — Stabilize | Drop `unstable_*` prefix from `resumeSession`, `closeSession`; verify `forkSession` | Phase 1 (types must compile) | S |
-| 3 — Auth + Status | Reactive auth classification + auto-retry/auto-compaction status emission | Phase 2 | M |
-| 4 — Hardening | Console redirect; `connection.closed.then(shutdown)` | Phase 3 | S |
-| 5 — Release | CHANGELOG, tag `v0.5.0`, GitHub release, post-release coordination | All prior | XS |
+| Phase | Component | Status | Commit |
+|-------|-----------|--------|--------|
+| 0 — Docs | New `docs/{prd,adr,architecture}/`; delete root planning files; update README | ✔ Shipped | `eac363a` (PR #1) |
+| 1 — Toolchain | ACP SDK bump + pi runtime migration | ✔ Shipped | `52b1626` |
+| 2 — Stabilize | Drop `unstable_*` prefix from `resumeSession`, `closeSession`; verify `forkSession` | ✔ Shipped (close/resume only — fork stays preview) | `d53ccfc` |
+| 3 — Auth + Status | Reactive auth classification + (~~status surfacing~~ descoped) | ✔ Shipped (FR-4 only) | `750dfd6` |
+| 4 — Hardening | Console redirect; `connection.closed.then(shutdown)` | ✔ Shipped | `97c82da` |
+| 5 — Release | CHANGELOG, tag `v0.5.0`, GitHub release, post-release coordination | ▴ PR #2 open; semantic-release will tag on merge | — |
 
-Each phase is one PR. Phases 4–5 can land together if the diff stays under ~100 LOC.
+All four code commits landed on a single branch (`feat/acp-v013-alignment`) in PR #2 — splitting into separate PRs added no review value once the diff was bounded and typecheck-clean per commit.
 
 ## Phase Detail
 
@@ -277,13 +278,13 @@ Each phase is one PR. Phases 4–5 can land together if the diff stays under ~10
 
 ## Open Questions
 
-- Q1 (PRD): Does pi `0.75.3` event-shape break the translate layer beyond the scope rename? Answered in Phase 1.
-- Q2 (PRD): Bump `engines.node` to `>=24` to match pi? **Resolved:** hard requirement.
-- Q3 (PRD): Is `forkSession` stable in `v0.22.1`? Resolved in Phase 2.
-- Q4 (PRD): Continue advertising `modes` alongside `sessionConfigOptions`? Lean yes per spec note; finalize in Phase 2 PR.
-- Q5 (PRD): Do auto-retry / auto-compaction events still exist in pi `0.75.3` with the same names? Resolved in Phase 3B.
-- Q6 (PRD): Replace svkozak in the ACP registry or coexist? Post-release coordination.
-- Q7 (PRD): Move pi-acp toolchain to pnpm + GitHub Packages per VSH baseline? Separate ADR (ADR-0006, future); not blocking v0.5.
+- Q1: pi `0.75.3` event shape — **Resolved.** No break. Tests passed without translate-layer changes.
+- Q2: `engines.node >= 24` — **Resolved.** Hard pin.
+- Q3: `forkSession` stability — **Resolved.** Still preview. Handler stays prefixed.
+- Q4: `modes` alongside `configOptions` — **Resolved.** Both advertised, no deprecation pressure.
+- Q5: Auto-retry / auto-compaction events — **Resolved on pi side**, events exist; **descoped on ACP side** because no rendering target. See FR-6 descope note in PRD-001 §5 and PRD-002 for the deferred surface.
+- Q6: ACP registry — Post-release coordination, still pending.
+- Q7: pnpm / GH Packages toolchain — Separate ADR, not blocking. Number reservation dropped; future ADR claims its own slot.
 
 ## ADR Index
 

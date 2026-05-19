@@ -6,9 +6,11 @@ ACP ([Agent Client Protocol](https://agentclientprotocol.com/get-started/introdu
 
 ## Specs and decisions
 
-- [`docs/prd/PRD-001-acp-v013-zed-alignment.md`](docs/prd/PRD-001-acp-v013-zed-alignment.md) — active release PRD (v0.5).
-- [`docs/architecture/plan-acp-v013-zed-alignment.md`](docs/architecture/plan-acp-v013-zed-alignment.md) — phased implementation plan.
-- [`docs/adr/`](docs/adr/) — architecture decision records (ADR-0001..ADR-0004).
+- [`docs/prd/PRD-001-acp-v013-zed-alignment.md`](docs/prd/PRD-001-acp-v013-zed-alignment.md) — v0.5 release PRD (Shipped).
+- [`docs/prd/PRD-002-portable-runtime.md`](docs/prd/PRD-002-portable-runtime.md) — v0.6 portable runtime + multi-host resource composition (Draft).
+- [`docs/architecture/plan-acp-v013-zed-alignment.md`](docs/architecture/plan-acp-v013-zed-alignment.md) — v0.5 phased implementation plan.
+- [`docs/architecture/plan-portable-runtime.md`](docs/architecture/plan-portable-runtime.md) — v0.6 phased implementation plan.
+- [`docs/adr/`](docs/adr/) — architecture decision records (ADR-0001..ADR-0009).
 - [`docs/architecture/acp-conformance.md`](docs/architecture/acp-conformance.md) — ACP conformance reference.
 - [`docs/architecture/claude-acp-comparison.md`](docs/architecture/claude-acp-comparison.md) — reference comparison against `claude-agent-acp`.
 
