@@ -595,7 +595,7 @@ Phased, behind manifest opt-in throughout. Each phase is one PR. Plan file (`doc
 2. **Phase 4** — `VirtualResourceLoader` + `LocalBackend` only. Behavior identical to v0.5 with no manifest. Existing tests pass unmodified. *(Shipped — was originally numbered Phase 1.)*
 3. **Phase 5** — Manifest parser + cascade resolver + Zod schema. Tests with example manifests. *(Shipped — was originally numbered Phase 2.)*
 4. **Phase 6** — `SshBackend`. Tests against fake-ssh fixture (no real network). *(Shipped — AGENTS files via paths.agentsFiles only; skills/prompts/extensions over SSH stay deferred and surface diagnostics.)*
-5. **Phase 7** — `HttpBackend`. Tests with fixture HTTPS server.
+5. **Phase 7** — `HttpBackend`. *(Shipped — HTTPS-only `fetch`, per-URL in-memory TTL cache (default 300 s) survives across reload(), AbortController timeout. Tests use an injected `fetchImpl` stub instead of a live TLS server. AGENTS files via paths.agentsFiles only; skills/prompts/extensions over HTTP stay deferred and surface diagnostics.)*
 6. **Phase 8** — `AcpFsBackend` + FR-6 `read` delegation. Integration test against fake ACP client.
 7. **Phase 9** — `import_resource` custom tool. Tests with synthetic source.
 8. **Phase 10** — Cwd-independence modes (`overlay`, `none`). Component tests.

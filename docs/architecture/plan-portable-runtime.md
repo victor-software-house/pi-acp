@@ -171,7 +171,7 @@ Numbering aligns with the combined PRD-002 + PRD-003 phase sequence shipped on t
 | 4 — Loader skeleton | `VirtualResourceLoader` + `LocalBackend` only | Phase 0 | M (shipped) |
 | 5 — Manifest | Cascade resolver + Zod schema + YAML parser dep | Phase 4 | M (shipped) |
 | 6 — SSH backend | `SshBackend` + tests against fake-ssh fixture | Phase 4 | M (shipped) |
-| 7 — HTTP backend | `HttpBackend` + tests with fixture HTTPS server | Phase 4 | S |
+| 7 — HTTP backend | `HttpBackend` + tests via injected `fetchImpl` stub | Phase 4 | M (shipped) |
 | 8 — ACP-FS backend + read delegation | `AcpFsBackend` + `acp_read` custom tool + capability gate | Phase 4 | M |
 | 9 — `import_resource` tool | Custom tool + `extendResources` wiring | Phases 4, 5 | M |
 | 10 — Cwd modes | `overlay` + `none` mode handlers + tmpdir lifecycle | Phases 4, 5 | M |
@@ -247,15 +247,24 @@ Phases 6–7 can swap order. Phase 8 depends on Phases 4+5. Phase 9 depends on P
 ### Phase 4 — HTTP backend
 
 1. `src/resources/sources/http.ts` — `HttpBackend`. HTTPS-only `fetch`.
-2. Per-source in-memory cache keyed by URL with TTL (default 300s).
-3. List operations: manifest must declare explicit file lists (HTTP has no listing primitive).
-4. Tests in `test/unit/resources/sources-http.test.ts`:
-   - Fixture HTTPS server (or `msw`).
-   - Cache TTL behavior.
-   - 4xx/5xx surface as per-source diagnostic.
-   - `http://` URLs rejected (HTTPS-only).
+2. Per-URL in-memory cache with TTL (default 300s). Cache survives across `reload()` calls so repeated session bootstraps within the TTL window skip the network. `cacheTtlSeconds: 0` defeats caching.
+3. List operations: manifest must declare explicit `paths.agentsFiles` (HTTP has no listing primitive). Skills/prompts/extensions over HTTP surface one diagnostic per declared kind.
+4. Per-request timeout via `AbortController` (default 5_000ms). Aborted fetches surface as `fetch timed out after Nms` diagnostics.
+5. Tests in `test/unit/http-backend.test.ts` (13 cases). Use an injected `fetchImpl` stub (typed as `typeof fetch`) instead of a fixture HTTPS server — Bun's `fetch` doesn't expose a TLS-relaxed mode for self-signed certs, and the production code path stays untouched in tests since the stub mirrors the exact `fetch(url, init?) => Promise<Response>` shape. Coverage:
+   - Constructor rejects `http://` and `ftp://`; accepts `https://` and strips trailing slash.
+   - Empty `paths.agentsFiles` → empty file list, no fetch calls.
+   - Successful multi-file fetch with baseUrl + path qualification.
+   - Leading-slash path dedupe.
+   - 4xx surfaces as warning diagnostic without throwing.
+   - `fetch`-throws surfaces as diagnostic.
+   - Hanging fetch + short `timeoutMs` triggers AbortController → diagnostic.
+   - Cache hit on second reload within TTL — no extra fetch.
+   - `cacheTtlSeconds: 0` forces refetch every reload.
+   - Unsupported-kind diagnostics when `paths.skills` / `.prompts` / `.extensions` declared.
+   - Default getters return empty / undefined.
+6. Wiring in `src/acp/agent.ts`: `kind: "http"` branch in `buildResourceLoader` instantiates `HttpBackend` with `cacheTtlSeconds: root.cache?.ttl` from the manifest.
 
-**Acceptance**: HTTP source contributes AGENTS files from a public URL. Cache TTL respected. Non-HTTPS rejected.
+**Acceptance**: HTTP source contributes AGENTS files from a public URL. Cache TTL respected (verified by stub call counts). Non-HTTPS rejected at construction. **Shipped on `main`.**
 
 ### Phase 5 — ACP-FS backend + `read` delegation
 
