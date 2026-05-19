@@ -1,3 +1,10 @@
+## [0.13.1](https://github.com/victor-software-house/pi-acp/compare/v0.13.0...v0.13.1) (2026-05-19)
+
+
+### Bug Fixes
+
+* **resources:** skip mode resolution on load/resume/fork — was leaking tmpdirs ([2284e35](https://github.com/victor-software-house/pi-acp/commit/2284e35b612bfdef7d9b0749e31f18e390d15cde))
+
 # [0.13.0](https://github.com/victor-software-house/pi-acp/compare/v0.12.0...v0.13.0) (2026-05-19)
 
 
