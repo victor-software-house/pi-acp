@@ -1,3 +1,10 @@
+# [0.7.0](https://github.com/victor-software-house/pi-acp/compare/v0.6.0...v0.7.0) (2026-05-19)
+
+
+### Features
+
+* **daemon:** cross-window SessionRegistry with ownership refcounting (PRD-003 Phase 2) ([20e04e6](https://github.com/victor-software-house/pi-acp/commit/20e04e621003d84eb0546fd8c3384b97fb3df030))
+
 # [0.6.0](https://github.com/victor-software-house/pi-acp/compare/v0.5.0...v0.6.0) (2026-05-19)
 
 
