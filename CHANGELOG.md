@@ -1,3 +1,10 @@
+# [0.17.0](https://github.com/victor-software-house/pi-acp/compare/v0.16.0...v0.17.0) (2026-05-19)
+
+
+### Features
+
+* **acp:** unstable_logout + auth.logout capability ([7bf06a9](https://github.com/victor-software-house/pi-acp/commit/7bf06a907257da81bb9211dbb74450d6d203c62d))
+
 # [0.16.0](https://github.com/victor-software-house/pi-acp/compare/v0.15.0...v0.16.0) (2026-05-19)
 
 
