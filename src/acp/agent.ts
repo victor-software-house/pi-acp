@@ -23,6 +23,8 @@ import {
 	type ListSessionsResponse,
 	type LoadSessionRequest,
 	type LoadSessionResponse,
+	type LogoutRequest,
+	type LogoutResponse,
 	type ModelInfo,
 	type NewSessionRequest,
 	type PromptRequest,
@@ -48,6 +50,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
 import {
 	type AgentSession,
+	AuthStorage,
 	type CreateAgentSessionResult,
 	createAgentSession,
 	createBashToolDefinition,
@@ -290,6 +293,48 @@ export class PiAcpAgent implements ACPAgent {
 		);
 	}
 
+	/**
+	 * Clears every provider's stored credentials from the shared AuthStorage.
+	 *
+	 * ACP `LogoutRequest` carries only `_meta` — no per-provider selector —
+	 * so this is correctly GLOBAL. Pi has no AuthStorage.clearAll(); we
+	 * loop `list()` + `remove()` per provider.
+	 *
+	 * Sessions stay live. Subsequent prompts may surface auth_required which
+	 * is the correct UX. Best-effort fanout: post an agent_message_chunk to
+	 * every live PiAcpSession announcing the logout for client visibility.
+	 *
+	 * Strategy: reuse an active session's AuthStorage instance when one
+	 * exists (every live session shares the same on-disk auth.json). When
+	 * no session is live, mint an ad-hoc `AuthStorage.create()` to operate
+	 * directly on the on-disk store.
+	 *
+	 * Gated by `agentCapabilities.auth.logout = {}`.
+	 */
+	async unstable_logout(_params: LogoutRequest): Promise<LogoutResponse> {
+		const live = this.sessions.first();
+		const authStorage =
+			live !== undefined ? live.piSession.modelRegistry.authStorage : AuthStorage.create();
+		const providers = authStorage.list();
+		for (const p of providers) authStorage.remove(p);
+
+		for (const s of this.sessions.values()) {
+			void this.conn
+				.sessionUpdate({
+					sessionId: s.sessionId,
+					update: {
+						sessionUpdate: "agent_message_chunk",
+						content: { type: "text", text: "[pi-acp] Logged out from all providers.\n" },
+					},
+				})
+				.catch(() => {
+					/* best-effort */
+				});
+		}
+
+		return { _meta: { piAcp: { clearedProviders: providers } } };
+	}
+
 	private registerWithDaemon(input: {
 		sessionId: string;
 		piSession: AgentSession;
@@ -499,6 +544,7 @@ export class PiAcpAgent implements ACPAgent {
 				supportsTerminalAuthMeta: this.clientCapabilities.terminalAuth,
 			}),
 			agentCapabilities: {
+				auth: { logout: {} },
 				loadSession: true,
 				mcpCapabilities: { http: false, sse: false },
 				promptCapabilities: {

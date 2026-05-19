@@ -62,6 +62,15 @@ describe("protocol surface: initialize", () => {
 		expect(sc.delete).toBeDefined();
 	});
 
+	test("advertises providers + auth.logout capabilities", async () => {
+		const { response } = await initAgent();
+		const caps = response.agentCapabilities;
+		if (caps === undefined) throw new Error("agentCapabilities missing");
+		expect(caps.providers).toBeDefined();
+		expect(caps.auth).toBeDefined();
+		expect(caps.auth?.logout).toBeDefined();
+	});
+
 	test("advertises prompt capabilities with embeddedContext", async () => {
 		const { response } = await initAgent();
 		const caps = response.agentCapabilities;
