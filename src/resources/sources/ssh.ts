@@ -20,11 +20,7 @@
  * Bun.spawn" decision matrix.
  */
 
-import type {
-	PromptTemplate,
-	ResourceDiagnostic,
-	Skill,
-} from "@earendil-works/pi-coding-agent";
+import type { PromptTemplate, ResourceDiagnostic, Skill } from "@earendil-works/pi-coding-agent";
 import type { ResourceSource } from "@pi-acp/resources/sources/base";
 
 export interface SshBackendPaths {
@@ -41,6 +37,12 @@ export interface SshBackendOptions {
 	paths?: SshBackendPaths;
 	/** Per-operation timeout. Default 5_000ms per PRD-002 §FR-2. */
 	timeoutMs?: number;
+	/**
+	 * ssh binary path. Defaults to `"ssh"` (resolved via PATH). Tests
+	 * inject an absolute-path shim because Bun.spawn's PATH lookup does
+	 * not honor runtime `process.env.PATH` mutations.
+	 */
+	sshCommand?: string;
 }
 
 interface AgentsFileCache {
@@ -57,6 +59,7 @@ export class SshBackend implements ResourceSource {
 	private readonly user: string | undefined;
 	private readonly paths: SshBackendPaths;
 	private readonly timeoutMs: number;
+	private readonly sshCommand: string;
 	private cache: AgentsFileCache | null = null;
 
 	constructor(opts: SshBackendOptions) {
@@ -65,6 +68,7 @@ export class SshBackend implements ResourceSource {
 		this.user = opts.user;
 		this.paths = opts.paths ?? {};
 		this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+		this.sshCommand = opts.sshCommand ?? "ssh";
 	}
 
 	async reload(): Promise<void> {
@@ -78,14 +82,16 @@ export class SshBackend implements ResourceSource {
 		const files: Array<{ path: string; content: string }> = [];
 		if (list.length > 0) {
 			const results = await Promise.all(
-				list.map((path) => this.cat(path).then(
-					(content) => ({ path, content, error: null as string | null }),
-					(err: unknown) => ({
-						path,
-						content: null as string | null,
-						error: err instanceof Error ? err.message : String(err),
-					}),
-				)),
+				list.map((path) =>
+					this.cat(path).then(
+						(content) => ({ path, content, error: null as string | null }),
+						(err: unknown) => ({
+							path,
+							content: null as string | null,
+							error: err instanceof Error ? err.message : String(err),
+						}),
+					),
+				),
 			);
 			for (const r of results) {
 				if (r.content !== null) {
@@ -152,7 +158,7 @@ export class SshBackend implements ResourceSource {
 		const connectSeconds = Math.max(1, Math.ceil(this.timeoutMs / 1000));
 		const proc = Bun.spawn(
 			[
-				"ssh",
+				this.sshCommand,
 				"-o",
 				"BatchMode=yes",
 				"-o",
@@ -165,7 +171,9 @@ export class SshBackend implements ResourceSource {
 			{
 				stdout: "pipe",
 				stderr: "pipe",
-				signal: AbortSignal.timeout(this.timeoutMs),
+				env: process.env,
+				timeout: this.timeoutMs,
+				killSignal: "SIGKILL",
 			},
 		);
 		const [stdout, stderr, exitCode] = await Promise.all([
@@ -174,9 +182,7 @@ export class SshBackend implements ResourceSource {
 			proc.exited,
 		]);
 		if (exitCode !== 0) {
-			throw new Error(
-				`ssh exited ${exitCode}: ${stderr.trim() || "(no stderr)"}`,
-			);
+			throw new Error(`ssh exited ${exitCode}: ${stderr.trim() || "(no stderr)"}`);
 		}
 		return stdout;
 	}
