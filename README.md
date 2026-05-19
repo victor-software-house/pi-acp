@@ -2,7 +2,15 @@
 
 ACP ([Agent Client Protocol](https://agentclientprotocol.com/get-started/introduction)) adapter for [`pi`](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent) coding agent.
 
-`pi-acp` embeds pi directly via the `@mariozechner/pi-coding-agent` SDK and exposes it as an ACP agent over stdio. Each ACP session owns one in-process `AgentSession`.
+`pi-acp` embeds pi directly via the `@earendil-works/pi-coding-agent` SDK and exposes it as an ACP agent over stdio. Each ACP session owns one in-process `AgentSession`.
+
+## Specs and decisions
+
+- [`docs/prd/PRD-001-acp-v013-zed-alignment.md`](docs/prd/PRD-001-acp-v013-zed-alignment.md) — active release PRD (v0.5).
+- [`docs/architecture/plan-acp-v013-zed-alignment.md`](docs/architecture/plan-acp-v013-zed-alignment.md) — phased implementation plan.
+- [`docs/adr/`](docs/adr/) — architecture decision records (ADR-0001..ADR-0004).
+- [`docs/architecture/acp-conformance.md`](docs/architecture/acp-conformance.md) — ACP conformance reference.
+- [`docs/architecture/claude-acp-comparison.md`](docs/architecture/claude-acp-comparison.md) — reference comparison against `claude-agent-acp`.
 
 ## Status
 
@@ -43,8 +51,8 @@ Active development. ACP compliance is improving steadily. Development is centere
 
 ## Prerequisites
 
-- Node.js 20+
-- `pi` installed globally: `npm install -g @mariozechner/pi-coding-agent`
+- Node.js 24+ (hard requirement, matches pi runtime)
+- `pi` installed globally (v0.75.3+): `npm install -g @earendil-works/pi-coding-agent`
 - Configure `pi` for your model providers/API keys
 
 ## Install
@@ -187,7 +195,7 @@ test/
 - `configOptions` is the preferred configuration mechanism. Zed uses it exclusively when present.
 - pi-acp uses direct filesystem access rather than delegating reads/writes to the ACP client. This means pi reads on-disk file versions, not unsaved editor buffers.
 
-See [docs/engineering/acp-conformance.md](docs/engineering/acp-conformance.md) for detailed conformance status.
+See [docs/architecture/acp-conformance.md](docs/architecture/acp-conformance.md) for detailed conformance status.
 
 ## Release
 
