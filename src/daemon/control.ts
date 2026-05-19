@@ -1,25 +1,20 @@
-import type { Socket } from "node:net";
-import type { DaemonContext } from "@pi-acp/daemon/context";
-
 /**
- * Daemon control-frame protocol (in-band on the same socket).
+ * Daemon control plane: a Hono app served over a separate Unix domain socket
+ * (`~/.pi/run/pi-acp-control.sock` by default).
  *
- * Methods recognized BEFORE the ACP handoff:
- *   - `daemon/status` — returns runtime info (uptime, connection count,
- *     session count, pid, version).
- *   - `daemon/shutdown` — graceful shutdown.
+ * Operator clients (`pi-acp --daemon-status`, `pi-acp --daemon-stop`) talk to
+ * this surface via HTTP-over-UDS. Keeping it out-of-band from the ACP NDJSON
+ * socket means no first-frame peeking, no stream unshift dance — the ACP
+ * accept path is pure ACP.
  *
- * The first newline-terminated frame received on a new socket is sniffed
- * for these method names. Anything else hands the socket to the normal
- * ACP serve path.
+ * Routes:
+ *   GET  /status      → { uptimeSeconds, connections, sessions, pid, version }
+ *   POST /shutdown    → triggers graceful shutdown (response sent first)
+ *   GET  /sessions    → daemon session registry snapshot
  */
 
-export interface ControlPeekResult {
-	kind: "control" | "passthrough";
-	method?: "daemon/status" | "daemon/shutdown";
-	id?: number | string | null;
-	buffered: Buffer;
-}
+import type { DaemonContext } from "@pi-acp/daemon/context";
+import { Hono } from "hono";
 
 export interface ControlContext {
 	ctx: DaemonContext;
@@ -27,101 +22,63 @@ export interface ControlContext {
 	pid: number;
 	version: string;
 	activeConnections: () => number;
+	onShutdown: () => void;
 }
 
-const FIRST_FRAME_TIMEOUT_MS = 200;
+export function buildControlApp(control: ControlContext): Hono {
+	const app = new Hono();
 
-function readMethod(parsed: unknown): "daemon/status" | "daemon/shutdown" | null {
-	if (typeof parsed !== "object" || parsed === null) return null;
-	const raw: unknown = Reflect.get(parsed, "method");
-	if (raw === "daemon/status") return "daemon/status";
-	if (raw === "daemon/shutdown") return "daemon/shutdown";
-	return null;
-}
-
-function readId(parsed: unknown): number | string | null {
-	if (typeof parsed !== "object" || parsed === null) return null;
-	const raw: unknown = Reflect.get(parsed, "id");
-	if (typeof raw === "number") return raw;
-	if (typeof raw === "string") return raw;
-	return null;
-}
-
-export async function peekFirstFrame(socket: Socket): Promise<ControlPeekResult> {
-	return new Promise((resolve) => {
-		let buf = Buffer.alloc(0);
-		let done = false;
-
-		const finish = (result: ControlPeekResult): void => {
-			if (done) return;
-			done = true;
-			socket.off("data", onData);
-			clearTimeout(timer);
-			resolve(result);
-		};
-
-		const onData = (chunk: Buffer): void => {
-			buf = Buffer.concat([buf, chunk]);
-			const idx = buf.indexOf(0x0a);
-			if (idx === -1) return;
-			const line = buf.subarray(0, idx).toString("utf8");
-			try {
-				const parsed: unknown = JSON.parse(line);
-				const method = readMethod(parsed);
-				if (method !== null) {
-					const id = readId(parsed);
-					finish({ kind: "control", method, id, buffered: buf });
-					return;
-				}
-			} catch {
-				// Not valid JSON — let ACP framing handle it.
-			}
-			finish({ kind: "passthrough", buffered: buf });
-		};
-
-		// If we get nothing in 200ms, treat as ACP passthrough — the client
-		// may be slow to send the first frame (acceptable; ACP servers idle).
-		const timer = setTimeout(
-			() => finish({ kind: "passthrough", buffered: buf }),
-			FIRST_FRAME_TIMEOUT_MS,
-		);
-		timer.unref?.();
-
-		socket.on("data", onData);
-	});
-}
-
-export function handleStatus(
-	socket: Socket,
-	id: number | string | null,
-	control: ControlContext,
-): void {
-	const uptimeSeconds = Math.round((Date.now() - control.startedAt) / 1000);
-	const response = {
-		jsonrpc: "2.0",
-		id,
-		result: {
-			uptimeSeconds,
+	app.get("/status", (c) =>
+		c.json({
+			uptimeSeconds: Math.round((Date.now() - control.startedAt) / 1000),
 			connections: control.activeConnections(),
 			sessions: control.ctx.sessionRegistry.listAll().length,
 			pid: control.pid,
 			version: control.version,
-		},
-	};
-	socket.write(`${JSON.stringify(response)}\n`);
-	socket.end();
+		}),
+	);
+
+	app.post("/shutdown", (c) => {
+		// Defer one tick so the response flushes before we tear the listener
+		// down — otherwise the operator sees a connection reset instead of 200.
+		setImmediate(control.onShutdown);
+		return c.json({ ok: true });
+	});
+
+	app.get("/sessions", (c) =>
+		c.json({
+			sessions: control.ctx.sessionRegistry.listAll().map((entry) => ({
+				sessionId: entry.sessionId,
+				cwd: entry.cwd,
+				owner: entry.ownerConnectionId,
+				alsoHeldBy: [...entry.alsoHeldBy],
+				updatedAt: entry.updatedAt,
+			})),
+		}),
+	);
+
+	return app;
 }
 
-export function handleShutdown(
-	socket: Socket,
-	id: number | string | null,
-	onShutdown: () => void,
-): void {
-	const response = { jsonrpc: "2.0", id, result: {} };
-	socket.write(`${JSON.stringify(response)}\n`, () => {
-		socket.end();
-		// Defer one tick so the response is flushed before we tear the
-		// listener down.
-		setImmediate(onShutdown);
+export interface ControlServer {
+	stop(): void;
+}
+
+/**
+ * Bind the control app to a Unix domain socket. Uses Bun.serve's `unix` option.
+ */
+export function serveControl(app: Hono, socketPath: string): ControlServer {
+	const server = Bun.serve({
+		unix: socketPath,
+		fetch: app.fetch,
 	});
+	return {
+		stop() {
+			try {
+				void server.stop(true);
+			} catch {
+				/* best-effort */
+			}
+		},
+	};
 }
