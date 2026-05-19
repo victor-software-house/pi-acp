@@ -20,10 +20,9 @@
  * the 99% of real-world stall modes. See the `bun-shell` skill.
  */
 
-import { $ } from "bun";
-
 import type { PromptTemplate, ResourceDiagnostic, Skill } from "@earendil-works/pi-coding-agent";
 import type { ResourceSource } from "@pi-acp/resources/sources/base";
+import { $ } from "bun";
 
 export interface SshBackendPaths {
 	skills?: string | undefined;
