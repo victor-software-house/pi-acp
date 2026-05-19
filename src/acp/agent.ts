@@ -11,10 +11,14 @@ import {
 	type CloseSessionResponse,
 	type DeleteSessionRequest,
 	type DeleteSessionResponse,
+	type DisableProvidersRequest,
+	type DisableProvidersResponse,
 	type ForkSessionRequest,
 	type ForkSessionResponse,
 	type InitializeRequest,
 	type InitializeResponse,
+	type ListProvidersRequest,
+	type ListProvidersResponse,
 	type ListSessionsRequest,
 	type ListSessionsResponse,
 	type LoadSessionRequest,
@@ -30,6 +34,8 @@ import {
 	type SessionInfo,
 	type SessionModelState,
 	type SessionModeState,
+	type SetProvidersRequest,
+	type SetProvidersResponse,
 	type SetSessionConfigOptionRequest,
 	type SetSessionConfigOptionResponse,
 	type SetSessionModelRequest,
@@ -61,6 +67,11 @@ import {
 import { ExtMethodDispatcher } from "@pi-acp/acp/ext-methods";
 import { resolveModelPreference } from "@pi-acp/acp/model-alias";
 import { skillCommandsEnabled } from "@pi-acp/acp/pi-settings";
+import {
+	applyDisableProvider,
+	applySetProvider,
+	buildListProvidersResponse,
+} from "@pi-acp/acp/providers";
 import {
 	buildToolTitle,
 	PiAcpSession,
@@ -183,6 +194,12 @@ export class PiAcpAgent implements ACPAgent {
 	private readonly connectionId = randomUUID();
 	private readonly extMethods: ExtMethodDispatcher;
 	private readonly startedAt = Date.now();
+	/**
+	 * pi-acp-side soft-disable set for providers. Pi has only `unregister`
+	 * (destructive); we layer a disabled-set on top so `listProviders` can
+	 * report `current: null` per ACP spec even after disable.
+	 */
+	private readonly disabledProviders = new Set<string>();
 
 	dispose(): void {
 		// On connection close, release every session this connection owned or
@@ -226,6 +243,51 @@ export class PiAcpAgent implements ACPAgent {
 
 	async extNotification(method: string, params: Record<string, unknown>): Promise<void> {
 		await this.extMethods.handleNotification(method, params);
+	}
+
+	/**
+	 * Iterable of every live `ModelRegistry` instance — local SessionManager
+	 * plus daemon SessionRegistry. Used by the providers/* methods to apply
+	 * mutations across all live sessions.
+	 */
+	private liveModelRegistries(): Iterable<import("@earendil-works/pi-coding-agent").ModelRegistry> {
+		const out: import("@earendil-works/pi-coding-agent").ModelRegistry[] = [];
+		for (const s of this.sessions.values()) out.push(s.piSession.modelRegistry);
+		if (this.daemonContext !== undefined) {
+			for (const e of this.daemonContext.sessionRegistry.listAll()) {
+				out.push(e.piSession.modelRegistry);
+			}
+		}
+		return out;
+	}
+
+	async unstable_listProviders(_params: ListProvidersRequest): Promise<ListProvidersResponse> {
+		return buildListProvidersResponse({
+			registries: () => this.liveModelRegistries(),
+			disabled: this.disabledProviders,
+		});
+	}
+
+	async unstable_setProvider(params: SetProvidersRequest): Promise<SetProvidersResponse> {
+		if (params.id === "") {
+			throw RequestError.invalidParams("provider id must be non-empty");
+		}
+		return applySetProvider(
+			{ registries: () => this.liveModelRegistries(), disabled: this.disabledProviders },
+			params,
+		);
+	}
+
+	async unstable_disableProvider(
+		params: DisableProvidersRequest,
+	): Promise<DisableProvidersResponse> {
+		if (params.id === "") {
+			throw RequestError.invalidParams("provider id must be non-empty");
+		}
+		return applyDisableProvider(
+			{ registries: () => this.liveModelRegistries(), disabled: this.disabledProviders },
+			params,
+		);
 	}
 
 	private registerWithDaemon(input: {
@@ -451,6 +513,7 @@ export class PiAcpAgent implements ACPAgent {
 					fork: {},
 					delete: {},
 				},
+				providers: {},
 			},
 		};
 	}
