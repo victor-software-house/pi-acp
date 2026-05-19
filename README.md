@@ -62,6 +62,11 @@ Active development. ACP compliance is improving steadily. Development is centere
   - `local` (default) / `overlay` — ACP `params.cwd` used as session cwd; manifest roots compose
   - `none` — pi-acp mints an ephemeral tmpdir under `os.tmpdir()/pi-acp-session-*`, cleaned up at session dispose. For one-shot Q&A sessions that shouldn't pollute any project directory.
 - **ACP-FS `read` delegation** (PRD-002 §FR-6) — When the client advertises `clientCapabilities.fs.readTextFile`, pi-acp routes pi's built-in `read` tool through `connection.fs.readTextFile` instead of local disk. Lets Zed Remote read the actual remote workspace files (the ones the user is editing) while pi runs locally.
+- **ACP terminal delegation** (PRD-002 §FR-6.5) — When the client advertises `clientCapabilities.terminal`, pi-acp overrides pi's built-in `bash` tool with an ACP `createTerminal`-backed implementation. Commands run on the client's machine via `terminal/*` lifecycle, so Zed Remote workflows execute `bash` on the remote workspace where the user actually edits. Pairs with `read` delegation so the full read/bash pair lands consistently remote.
+- **ACP provider config** — `agentCapabilities.providers = {}` advertises `providers/list`, `providers/set`, `providers/disable`. Soft-disable on top of pi's `unregisterProvider`. Per-process; no `models.json` writer.
+- **ACP logout** — `agentCapabilities.auth.logout = {}` advertises `logout`. Clears every provider's credentials from the shared `AuthStorage` in one call.
+- **ACP session delete** — `sessionCapabilities.delete = {}` advertises `session/delete`. Removes the session file via `fs.rmSync` after daemon registry release.
+- **ACP `extMethod` / `extNotification`** — dispatcher under the `pi-acp/` namespace. Built-ins: `pi-acp/ping`, `pi-acp/runtime-info`.
 
 ## Resource composition (`.pi-acp.yaml`)
 
@@ -208,7 +213,7 @@ bun run dev          # run from src
 bun run build        # tsdown -> dist/index.mjs
 bun run typecheck    # tsc --noEmit
 bun run lint         # biome + oxlint
-bun test             # 277 tests
+bun test             # 308 tests
 ```
 
 Project layout:
@@ -249,7 +254,14 @@ test/
 
 - **`agent_plan`** -- plan updates not emitted before tool execution. pi has no equivalent planning surface.
 - **ACP filesystem `write` delegation** (`fs/write_text_file`) -- pi writes locally. Not advertised. `fs/read_text_file` IS routed through ACP when the client advertises the capability (see Features → ACP-FS `read` delegation).
-- **ACP terminal delegation** (`terminal/*`) -- pi executes commands locally. Not advertised.
+- **ACP terminal delegation** (`terminal/*`) -- DELEGATED. When the client advertises `clientCapabilities.terminal`, pi-acp overrides pi's built-in `bash` tool with an ACP `createTerminal`-backed implementation so commands run on the client's machine (Zed Remote routes `terminal/*` to the remote workspace). See Features → ACP terminal delegation.
+
+### ACP optional methods implemented (substrate completion at v0.16.0+)
+
+- **`session/delete`** -- advertised via `sessionCapabilities.delete = {}`. Removes the session file + releases daemon registry entry. Refuses sessions owned by another connection.
+- **`providers/list` / `providers/set` / `providers/disable`** -- advertised via `agentCapabilities.providers = {}`. Operates on every live `ModelRegistry`. Soft-disable is layered on top of pi's destructive `unregisterProvider`. Mutations are per-process (no models.json writer in pi).
+- **`logout`** -- advertised via `agentCapabilities.auth.logout = {}`. Clears every provider's credentials from the shared AuthStorage. Sessions stay live; subsequent prompts may surface `auth_required`.
+- **`extMethod` / `extNotification`** -- dispatcher under the `pi-acp/` method-name namespace. Built-in handlers: `pi-acp/ping`, `pi-acp/runtime-info`. Unknown methods → `methodNotFound`.
 
 ### Design decisions
 
