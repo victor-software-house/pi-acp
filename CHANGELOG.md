@@ -1,3 +1,10 @@
+# [0.10.0](https://github.com/victor-software-house/pi-acp/compare/v0.9.0...v0.10.0) (2026-05-19)
+
+
+### Features
+
+* **resources:** add http backend with https-only fetch and per-url ttl cache ([941cd31](https://github.com/victor-software-house/pi-acp/commit/941cd316f8d441dc212303c194d39757d0a3192b))
+
 # [0.9.0](https://github.com/victor-software-house/pi-acp/compare/v0.8.0...v0.9.0) (2026-05-19)
 
 
