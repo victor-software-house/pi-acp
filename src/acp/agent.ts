@@ -43,6 +43,7 @@ import {
 	type AgentSession,
 	type CreateAgentSessionResult,
 	createAgentSession,
+	getAgentDir,
 	SessionManager as PiSessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { buildAuthMethods } from "@pi-acp/acp/auth";
@@ -65,6 +66,8 @@ import {
 import { extractUserMessageText } from "@pi-acp/acp/translate/pi-messages";
 import { acpPromptToPiMessage } from "@pi-acp/acp/translate/prompt";
 import { formatToolContent } from "@pi-acp/acp/translate/tool-content";
+import { VirtualResourceLoader } from "@pi-acp/resources/loader";
+import { LocalBackend } from "@pi-acp/resources/sources/local";
 
 import pkgJson from "../../package.json" with { type: "json" };
 
@@ -213,6 +216,20 @@ export class PiAcpAgent implements ACPAgent {
 		return { disposed: result.kind === "disposed" };
 	}
 
+	/**
+	 * Build a VirtualResourceLoader for a new pi session. Phase 4 ships a
+	 * single LocalBackend (cwd + agentDir), which yields identical behavior
+	 * to v0.5's bare createAgentSession({ cwd }). Phase 5+ extends this from
+	 * a manifest cascade.
+	 */
+	private async buildResourceLoader(cwd: string): Promise<VirtualResourceLoader> {
+		const agentDir = getAgentDir();
+		const local = new LocalBackend({ cwd, agentDir });
+		const loader = new VirtualResourceLoader({ sources: [local] });
+		await loader.reload();
+		return loader;
+	}
+
 	async initialize(params: InitializeRequest): Promise<InitializeResponse> {
 		const supportedVersion = 1;
 		const requested = params.protocolVersion;
@@ -254,7 +271,8 @@ export class PiAcpAgent implements ACPAgent {
 
 		let result: CreateAgentSessionResult;
 		try {
-			result = await createAgentSession({ cwd: params.cwd });
+			const resourceLoader = await this.buildResourceLoader(params.cwd);
+			result = await createAgentSession({ cwd: params.cwd, resourceLoader });
 		} catch (e: unknown) {
 			const authErr = detectAuthError(e);
 			if (authErr !== null) throw authErr;
@@ -602,9 +620,11 @@ export class PiAcpAgent implements ACPAgent {
 		let result: CreateAgentSessionResult;
 		try {
 			const sm = PiSessionManager.open(sessionFile);
+			const resourceLoader = await this.buildResourceLoader(params.cwd);
 			result = await createAgentSession({
 				cwd: params.cwd,
 				sessionManager: sm,
+				resourceLoader,
 			});
 		} catch (e: unknown) {
 			const authErr = detectAuthError(e);
@@ -741,9 +761,11 @@ export class PiAcpAgent implements ACPAgent {
 		let result: CreateAgentSessionResult;
 		try {
 			const sm = PiSessionManager.open(sessionFile);
+			const resourceLoader = await this.buildResourceLoader(params.cwd);
 			result = await createAgentSession({
 				cwd: params.cwd,
 				sessionManager: sm,
+				resourceLoader,
 			});
 		} catch (e: unknown) {
 			const authErr = detectAuthError(e);
@@ -810,9 +832,11 @@ export class PiAcpAgent implements ACPAgent {
 		let result: CreateAgentSessionResult;
 		try {
 			const sm = PiSessionManager.forkFrom(sourceFile, params.cwd);
+			const resourceLoader = await this.buildResourceLoader(params.cwd);
 			result = await createAgentSession({
 				cwd: params.cwd,
 				sessionManager: sm,
+				resourceLoader,
 			});
 		} catch (e: unknown) {
 			const authErr = detectAuthError(e);
