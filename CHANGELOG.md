@@ -1,3 +1,10 @@
+# [0.8.0](https://github.com/victor-software-house/pi-acp/compare/v0.7.0...v0.8.0) (2026-05-19)
+
+
+### Features
+
+* **daemon:** idle shutdown + --daemon-status + --daemon-stop (PRD-003 Phase 3) ([8705ccc](https://github.com/victor-software-house/pi-acp/commit/8705ccc903c200d5fafc6d82cfb654988f1aeee3))
+
 # [0.7.0](https://github.com/victor-software-house/pi-acp/compare/v0.6.0...v0.7.0) (2026-05-19)
 
 
