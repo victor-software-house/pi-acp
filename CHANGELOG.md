@@ -1,3 +1,13 @@
+# [0.5.0](https://github.com/victor-software-house/pi-acp/compare/v0.4.0...v0.5.0) (2026-05-19)
+
+
+### Features
+
+* **auth:** drop proactive env-sniffing; classify reactively from pi runtime ([71eef46](https://github.com/victor-software-house/pi-acp/commit/71eef46da0c9c43c82699ac4d10483ab9efdf945))
+* **deps:** bump SDK to ^0.22.1, pi to @earendil-works/* ^0.75.3, node >=24 ([21248c5](https://github.com/victor-software-house/pi-acp/commit/21248c54b4fcc3def5e2b75cd93206272e526e6a))
+* **runtime:** redirect console.* to stderr; drive shutdown from connection lifecycle ([beaeebc](https://github.com/victor-software-house/pi-acp/commit/beaeebc27394a1916a812783a0808712dad43cfa))
+* **session:** rename close/resume to stable form, keep fork unstable ([9e190c0](https://github.com/victor-software-house/pi-acp/commit/9e190c01aab35b99ce80554bb16f7675ca269c81))
+
 # [0.4.0](https://github.com/victor-software-house/pi-acp/compare/v0.3.0...v0.4.0) (2026-03-24)
 
 
