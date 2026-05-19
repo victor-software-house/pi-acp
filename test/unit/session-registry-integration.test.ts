@@ -3,13 +3,6 @@ import { PiAcpAgent } from "@pi-acp/acp/agent";
 import { createDaemonContext } from "@pi-acp/daemon/context";
 import { asAgentConn, FakeAgentSideConnection } from "../helpers/fakes";
 
-function makeAgent(): { agent: PiAcpAgent; conn: FakeAgentSideConnection } {
-	const conn = new FakeAgentSideConnection();
-	const ctx = createDaemonContext();
-	const agent = new PiAcpAgent(asAgentConn(conn), ctx);
-	return { agent, conn };
-}
-
 describe("multi-client SessionRegistry", () => {
 	test("dispose releases owned sessions from the shared registry", () => {
 		const ctx = createDaemonContext();
