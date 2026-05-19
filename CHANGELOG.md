@@ -1,3 +1,16 @@
+# [0.9.0](https://github.com/victor-software-house/pi-acp/compare/v0.8.0...v0.9.0) (2026-05-19)
+
+
+### Bug Fixes
+
+* **lint:** organize ssh.ts imports ([bcb98de](https://github.com/victor-software-house/pi-acp/commit/bcb98dea1aeab944ecd9ce5486dcd5925a31b603))
+
+
+### Features
+
+* **resources:** VirtualResourceLoader + LocalBackend skeleton (PRD-002 Phase 4) ([8603587](https://github.com/victor-software-house/pi-acp/commit/8603587782f88b5e45b533a152b4df9195c768e6))
+* v0.6 substrate — foundation + manifest cascade + SSH backend ([#9](https://github.com/victor-software-house/pi-acp/issues/9)) ([57d7700](https://github.com/victor-software-house/pi-acp/commit/57d77000ac37fe8278986b87734ff19402f47f75)), closes [#3](https://github.com/victor-software-house/pi-acp/issues/3)
+
 # [0.8.0](https://github.com/victor-software-house/pi-acp/compare/v0.7.0...v0.8.0) (2026-05-19)
 
 
