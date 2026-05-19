@@ -82,7 +82,7 @@ The full mapping (FR → skill, with rationale) lives in PRD-002 §16.
 - `base.ts` — shared `ResourceSource` interface + helpers (path normalization, skill parsing, prompt frontmatter parsing).
 - `local.ts` — `LocalBackend`. Wraps pi's `loadProjectContextFiles`, `loadSkills`, `loadSkillsFromDir` for one root. No remote calls.
 - `acp-fs.ts` — `AcpFsBackend`. Reads via `connection.fs.readTextFile`. Listing relies on manifest-declared file lists (ACP has no `fs/listDir`).
-- `ssh.ts` — `SshBackend`. Shipped Phase 6 with `Bun.spawn(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=N", target, "--", "cat", path])` array-form (injection-safe argv, no shell). Per-operation 5s timeout via Bun.spawn's native `timeout` + `killSignal: "SIGKILL"` (Bun Shell `$` lacks a timeout primitive per the `bun-shell` skill's "When you still need Bun.spawn" matrix). Inherits user's `~/.ssh/config`. Scope: AGENTS files via explicit `paths.agentsFiles` list; skills/prompts/extensions over SSH stay deferred and surface one diagnostic each. *(Skills: `bun-shell` mandatory before edits here. uv-shebanged Python under `scripts/` for non-runtime helper scripts only.)*
+- `ssh.ts` — `SshBackend`. Shipped Phase 6 as a single Bun Shell `$` invocation of `scripts/ssh-cat.py` (uv-shebanged Python, PEP 723 inline metadata, zero deps). The Python helper wraps system `ssh` with `subprocess.run(timeout=...)` AND passes `-o ConnectTimeout=N -o ServerAliveInterval=2 -o ServerAliveCountMax=N` so ssh self-terminates on a stalled remote. Bun Shell `$` is the right layer — interpolations are auto-escaped, the helper handles the wall-clock timeout `$` itself cannot enforce, and macOS does not ship coreutils' `timeout(1)`. Inherits user's `~/.ssh/config`. Scope: AGENTS files via explicit `paths.agentsFiles` list; skills/prompts/extensions over SSH stay deferred and surface one diagnostic each. *(Skills: `bun-shell` + `uv-python-cli` mandatory before edits here.)*
 - `http.ts` — `HttpBackend`. HTTPS-only `fetch`. Per-source `cache.ttl` (default 300s, in-memory).
 
 **ADR Reference**: ADR-0007 (delegation gate for `acp-fs`).
@@ -222,20 +222,21 @@ Phases 6–7 can swap order. Phase 8 depends on Phases 4+5. Phase 9 depends on P
 
 > *Originally tracked here as "Phase 3"; renumbered to Phase 6 in §Implementation Order to align with PRD-003's daemon-foundation phase numbering.*
 
-1. `src/resources/sources/ssh.ts` — `SshBackend`. `Bun.spawn(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=N", target, "--", "cat", path])` array-form (injection-safe argv, no shell). Per-operation 5s default timeout via Bun.spawn's native `timeout` + `killSignal: "SIGKILL"`. Bun Shell `$` is NOT used because it lacks a timeout primitive — see `bun-shell` skill §"When you still need Bun.spawn".
-2. Read operations: `ssh <conn> -- cat <path>`. Argv passes through verbatim.
+1. `scripts/ssh-cat.py` — uv-shebanged Python helper. `#!/usr/bin/env -S uv run --script` with PEP 723 inline metadata; stdlib only. Calls `subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=N", "-o", "ServerAliveInterval=2", "-o", "ServerAliveCountMax=N", target, "--", "cat", path], timeout=N)`. Exit codes mirror ssh; 124 on wall-clock timeout (coreutils convention); 255 on bad args / missing binary.
+2. `src/resources/sources/ssh.ts` — `SshBackend.cat` is a single Bun Shell `$` line: `await $\`${SSH_CAT_SCRIPT} --target ${target} --path ${path} --timeout-sec ${s} --ssh ${sshCommand}\`.quiet().nothrow()`. Interpolations auto-escaped. The Python helper holds the wall-clock timeout because `$` itself has no `.timeout()` (verified at runtime against bun 1.3.14 ShellPromise — only `cwd/env/quiet/nothrow/throws/text/json/lines/arrayBuffer/bytes/blob/run/then`). ssh's own `ServerAliveInterval` + `ConnectTimeout` make it self-terminate on a stalled remote, so the helper rarely needs to fire its own kill.
 3. **Scope**: AGENTS files via explicit `paths.agentsFiles` list only. Skills, prompts, and extensions over SSH stay deferred (no remote `find` discovery in this phase); declaring `paths.skills` / `.prompts` / `.extensions` surfaces one `"not yet implemented"` diagnostic per kind via `getSkills()` aggregation.
-4. `sshCommand?` constructor option allows tests to inject an absolute-path Bash shim, because Bun.spawn's `argv[0]` lookup does NOT honor runtime `process.env.PATH` mutations.
+4. `sshCommand?` constructor option threads through to the Python helper's `--ssh` arg so tests can point at an absolute-path Bash shim. Bun Shell `$` (and `Bun.spawn`) do NOT honor runtime `process.env.PATH` mutations for argv[0] resolution — verified empirically — so an explicit override is the portable test path.
 5. `ResourceSource.getExtensions` was made optional in this phase; `VirtualResourceLoader` routes extensions through the primary `LocalBackend` only.
 6. Manifest roots with `kind: "ssh"` materialize into `SshBackend` instances in `PiAcpAgent.buildResourceLoader`.
 7. Tests in `test/unit/ssh-backend.test.ts` (6 cases):
-   - cat round-trip + ssh:// path qualification.
+   - cat round-trip + ssh:// path qualification (shim shadows ssh, helper reads it).
    - Non-zero ssh exit surfaces as warning diagnostic without throwing.
    - Unsupported-kind diagnostics when `paths.skills` / `.prompts` / `.extensions` declared.
-   - Timeout aborts at `timeoutMs` (shim uses `exec sleep` so SIGKILL hits the actual blocker, not the bash wrapper).
+   - Timeout aborts at `timeoutMs` (shim's sleep path uses `exec sleep` so SIGKILL from `subprocess.run` hits the actual blocker, not the bash wrapper).
    - Default getters return empty when no agentsFiles declared.
+8. End-to-end verified against real ssh to `127.0.0.1`: ~118ms round-trip, exit 255 / "Host key verification failed." stderr forwarded cleanly.
 
-**Acceptance**: SSH source contributes AGENTS files from a remote host. Failure modes (timeout, non-zero exit, missing path) surface as diagnostics, not exceptions. **Shipped on `feat/v0.6-foundation-refactor` (commits `2cdc385`, `b13ddde`, `5869a40`).**
+**Acceptance**: SSH source contributes AGENTS files from a remote host. Failure modes (timeout, non-zero exit, missing path) surface as diagnostics, not exceptions. **Shipped on `feat/v0.6-foundation-refactor` (commits `2cdc385`, `b13ddde`, `5869a40`, `1a8416e`).**
 
 ### Phase 4 — HTTP backend
 
