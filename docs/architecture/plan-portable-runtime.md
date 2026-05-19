@@ -82,7 +82,7 @@ The full mapping (FR → skill, with rationale) lives in PRD-002 §16.
 - `base.ts` — shared `ResourceSource` interface + helpers (path normalization, skill parsing, prompt frontmatter parsing).
 - `local.ts` — `LocalBackend`. Wraps pi's `loadProjectContextFiles`, `loadSkills`, `loadSkillsFromDir` for one root. No remote calls.
 - `acp-fs.ts` — `AcpFsBackend`. Reads via `connection.fs.readTextFile`. Listing relies on manifest-declared file lists (ACP has no `fs/listDir`).
-- `ssh.ts` — `SshBackend`. Bun Shell `$` template for reads (`await $\`ssh ${user}@${host} cat ${path}\`.text()`) and listings (`await $\`ssh ${user}@${host} find ${path} -maxdepth 1 -type f\`.text()`). Per-operation 5s timeout via `.timeout(5000)`. Auto-escaped interpolations. Inherits user's `~/.ssh/config`. *(Skill: `bun-shell` mandatory before edits here. uv-shebanged Python under `scripts/` for non-runtime helper scripts only.)*
+- `ssh.ts` — `SshBackend`. Shipped Phase 6 with `Bun.spawn(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=N", target, "--", "cat", path])` array-form (injection-safe argv, no shell). Per-operation 5s timeout via Bun.spawn's native `timeout` + `killSignal: "SIGKILL"` (Bun Shell `$` lacks a timeout primitive per the `bun-shell` skill's "When you still need Bun.spawn" matrix). Inherits user's `~/.ssh/config`. Scope: AGENTS files via explicit `paths.agentsFiles` list; skills/prompts/extensions over SSH stay deferred and surface one diagnostic each. *(Skills: `bun-shell` mandatory before edits here. uv-shebanged Python under `scripts/` for non-runtime helper scripts only.)*
 - `http.ts` — `HttpBackend`. HTTPS-only `fetch`. Per-source `cache.ttl` (default 300s, in-memory).
 
 **ADR Reference**: ADR-0007 (delegation gate for `acp-fs`).
@@ -170,7 +170,7 @@ Numbering aligns with the combined PRD-002 + PRD-003 phase sequence shipped on t
 | 0 — Docs | PRD-002 + ADR-0006..0009 + this plan | None | M (shipped) |
 | 4 — Loader skeleton | `VirtualResourceLoader` + `LocalBackend` only | Phase 0 | M (shipped) |
 | 5 — Manifest | Cascade resolver + Zod schema + YAML parser dep | Phase 4 | M (shipped) |
-| 6 — SSH backend | `SshBackend` + tests against fake-ssh fixture | Phase 4 | M |
+| 6 — SSH backend | `SshBackend` + tests against fake-ssh fixture | Phase 4 | M (shipped) |
 | 7 — HTTP backend | `HttpBackend` + tests with fixture HTTPS server | Phase 4 | S |
 | 8 — ACP-FS backend + read delegation | `AcpFsBackend` + `acp_read` custom tool + capability gate | Phase 4 | M |
 | 9 — `import_resource` tool | Custom tool + `extendResources` wiring | Phases 4, 5 | M |

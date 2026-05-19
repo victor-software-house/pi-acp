@@ -24,10 +24,10 @@ import type { PromptTemplate, ResourceDiagnostic, Skill } from "@earendil-works/
 import type { ResourceSource } from "@pi-acp/resources/sources/base";
 
 export interface SshBackendPaths {
-	skills?: string;
-	prompts?: string;
-	agentsFiles?: string[];
-	extensions?: string;
+	skills?: string | undefined;
+	prompts?: string | undefined;
+	agentsFiles?: string[] | undefined;
+	extensions?: string | undefined;
 }
 
 export interface SshBackendOptions {

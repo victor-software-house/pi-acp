@@ -70,6 +70,7 @@ import { VirtualResourceLoader } from "@pi-acp/resources/loader";
 import { loadManifest, type ManifestDiagnostic } from "@pi-acp/resources/manifest";
 import type { ResourceSource } from "@pi-acp/resources/sources/base";
 import { LocalBackend } from "@pi-acp/resources/sources/local";
+import { SshBackend } from "@pi-acp/resources/sources/ssh";
 
 import pkgJson from "../../package.json" with { type: "json" };
 
@@ -224,9 +225,9 @@ export class PiAcpAgent implements ACPAgent {
 	 * default), turns each declared root into a ResourceSource, and ensures at
 	 * least one LocalBackend is present for the extension / theme passthrough.
 	 *
-	 * Phase 5 only materializes `kind: "local"` roots — `ssh`, `http`, and
-	 * `acp-fs` parse fine, but currently surface as diagnostics until their
-	 * backends land in subsequent phases.
+	 * Phase 5 materializes `kind: "local"`. Phase 6 adds `kind: "ssh"`.
+	 * `http` and `acp-fs` still parse fine but surface as diagnostics until
+	 * their backends land in subsequent phases.
 	 */
 	private async buildResourceLoader(
 		cwd: string,
@@ -245,6 +246,16 @@ export class PiAcpAgent implements ACPAgent {
 						agentDir: root.paths.agentDir ?? getAgentDir(),
 					}),
 				);
+				continue;
+			}
+			if (root.kind === "ssh") {
+				const sshOpts: ConstructorParameters<typeof SshBackend>[0] = {
+					id: root.id,
+					host: root.host,
+					paths: root.paths,
+				};
+				if (root.user !== undefined) sshOpts.user = root.user;
+				sources.push(new SshBackend(sshOpts));
 				continue;
 			}
 			const diag: ManifestDiagnostic = {

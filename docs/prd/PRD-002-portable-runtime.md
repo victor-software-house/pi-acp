@@ -594,7 +594,7 @@ Phased, behind manifest opt-in throughout. Each phase is one PR. Plan file (`doc
 1. **Phase 0** — This PRD + ADR-0006..0009 + plan. No code.
 2. **Phase 4** — `VirtualResourceLoader` + `LocalBackend` only. Behavior identical to v0.5 with no manifest. Existing tests pass unmodified. *(Shipped — was originally numbered Phase 1.)*
 3. **Phase 5** — Manifest parser + cascade resolver + Zod schema. Tests with example manifests. *(Shipped — was originally numbered Phase 2.)*
-4. **Phase 6** — `SshBackend`. Tests against fake-ssh fixture (no real network).
+4. **Phase 6** — `SshBackend`. Tests against fake-ssh fixture (no real network). *(Shipped — AGENTS files via paths.agentsFiles only; skills/prompts/extensions over SSH stay deferred and surface diagnostics.)*
 5. **Phase 7** — `HttpBackend`. Tests with fixture HTTPS server.
 6. **Phase 8** — `AcpFsBackend` + FR-6 `read` delegation. Integration test against fake ACP client.
 7. **Phase 9** — `import_resource` custom tool. Tests with synthetic source.
