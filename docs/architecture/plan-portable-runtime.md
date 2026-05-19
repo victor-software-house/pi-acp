@@ -82,7 +82,7 @@ The full mapping (FR → skill, with rationale) lives in PRD-002 §16.
 - `base.ts` — shared `ResourceSource` interface + helpers (path normalization, skill parsing, prompt frontmatter parsing).
 - `local.ts` — `LocalBackend`. Wraps pi's `loadProjectContextFiles`, `loadSkills`, `loadSkillsFromDir` for one root. No remote calls.
 - `acp-fs.ts` — `AcpFsBackend`. Reads via `connection.fs.readTextFile`. Listing relies on manifest-declared file lists (ACP has no `fs/listDir`).
-- `ssh.ts` — `SshBackend`. Shipped Phase 6 as a single Bun Shell `$` line: `perl -e 'alarm shift @ARGV; exec @ARGV or die "exec: $!\n"' ${sec} ${sshCommand} -o BatchMode=yes -o ConnectTimeout=${sec} -o ServerAliveInterval=2 -o ServerAliveCountMax=${alive} ${target} -- cat ${path}`. perl ships on macOS + Linux so no helper file is needed; `alarm` raises SIGALRM after N seconds → exit 142 surfaces as "ssh timeout". ssh's own `ConnectTimeout` + `ServerAliveInterval` self-terminate on a stalled remote first; perl is the belt-and-suspenders. `ShellPromise` has no `.timeout()` (verified at runtime against bun 1.3.14); macOS doesn't ship coreutils' `timeout(1)`; inline perl is the cleanest cross-platform shell-layer answer. Inherits user's `~/.ssh/config`. Scope: AGENTS files via explicit `paths.agentsFiles` list; skills/prompts/extensions over SSH stay deferred and surface one diagnostic each. *(Skill: `bun-shell` mandatory before edits here.)*
+- `ssh.ts` — `SshBackend`. Shipped Phase 6 as a single Bun Shell `$` line: `${sshCommand} -o BatchMode=yes -o ConnectTimeout=${sec} -o ServerAliveInterval=2 -o ServerAliveCountMax=${alive} ${target} -- cat ${path}`. ssh self-terminates via its own options — no caller-side wrapper, no perl alarm, no `timeout(1)`. Operator's `~/.ssh/config` (`ControlMaster auto`, `ControlPersist 10m`) handles spawn-cost amortization for free. `ShellPromise` has no `.timeout()` (verified at runtime against bun 1.3.14); ssh's options are the correct layer. Scope: AGENTS files via explicit `paths.agentsFiles` list; skills/prompts/extensions over SSH stay deferred and surface one diagnostic each. *(Skill: `bun-shell` mandatory before edits here.)*
 - `http.ts` — `HttpBackend`. HTTPS-only `fetch`. Per-source `cache.ttl` (default 300s, in-memory).
 
 **ADR Reference**: ADR-0007 (delegation gate for `acp-fs`).
@@ -225,11 +225,11 @@ Phases 6–7 can swap order. Phase 8 depends on Phases 4+5. Phase 9 depends on P
 1. `src/resources/sources/ssh.ts` — `SshBackend.cat` is one Bun Shell `$` line:
 
    ```ts
-   await $`perl -e 'alarm shift @ARGV; exec @ARGV or die "exec: $!\n"' ${sec} ${sshCommand} -o BatchMode=yes -o ConnectTimeout=${sec} -o ServerAliveInterval=2 -o ServerAliveCountMax=${alive} ${target} -- cat ${path}`.quiet().nothrow();
+   await $`${sshCommand} -o BatchMode=yes -o ConnectTimeout=${sec} -o ServerAliveInterval=2 -o ServerAliveCountMax=${alive} ${target} -- cat ${path}`.quiet().nothrow();
    ```
 
-   `alarm` raises SIGALRM after N seconds → SshBackend reads exit 142 as "ssh timeout". perl ships on macOS (`/usr/bin/perl`) and every Linux distro we target. macOS does not ship coreutils' `timeout(1)`, and `ShellPromise` has no `.timeout()` primitive (verified at runtime against bun 1.3.14 — only `cwd/env/quiet/nothrow/throws/text/json/lines/arrayBuffer/bytes/blob/run/then`). ssh's own `ConnectTimeout` + `ServerAliveInterval` + `ServerAliveCountMax` self-terminate the connection on a stalled remote so perl's alarm rarely fires in practice. Interpolations are auto-escaped by Bun Shell.
-2. No helper script in `scripts/` — earlier iterations of this phase used a uv-shebanged Python helper, but inline perl is one fewer file to maintain.
+   Timeout enforcement lives at the ssh-protocol layer: `ConnectTimeout=N` bounds TCP + handshake; `ServerAliveInterval=2 -o ServerAliveCountMax=N` bound post-auth silence on a stalled remote. ssh self-terminates without any caller-side wrapper. `ShellPromise` has no `.timeout()` (verified at runtime against bun 1.3.14 — only `cwd/env/quiet/nothrow/throws/text/json/lines/arrayBuffer/bytes/blob/run/then`); ssh's own options are the right layer. Operator's `~/.ssh/config` (`ControlMaster auto`, `ControlPersist 10m`) amortizes spawn cost from ~70ms cold to ~5ms warm on the same host within 10 minutes. Interpolations are auto-escaped by Bun Shell.
+2. No helper script in `scripts/` — earlier iterations of this phase used a uv-shebanged Python helper and then an inline perl alarm; both removed once ssh's own ServerAlive options proved sufficient for the realistic stall modes.
 3. **Scope**: AGENTS files via explicit `paths.agentsFiles` list only. Skills, prompts, and extensions over SSH stay deferred (no remote `find` discovery in this phase); declaring `paths.skills` / `.prompts` / `.extensions` surfaces one `"not yet implemented"` diagnostic per kind via `getSkills()` aggregation.
 4. `sshCommand?` constructor option threads through to the Python helper's `--ssh` arg so tests can point at an absolute-path Bash shim. Bun Shell `$` (and `Bun.spawn`) do NOT honor runtime `process.env.PATH` mutations for argv[0] resolution — verified empirically — so an explicit override is the portable test path.
 5. `ResourceSource.getExtensions` was made optional in this phase; `VirtualResourceLoader` routes extensions through the primary `LocalBackend` only.
@@ -238,11 +238,11 @@ Phases 6–7 can swap order. Phase 8 depends on Phases 4+5. Phase 9 depends on P
    - cat round-trip + ssh:// path qualification (shim shadows ssh, helper reads it).
    - Non-zero ssh exit surfaces as warning diagnostic without throwing.
    - Unsupported-kind diagnostics when `paths.skills` / `.prompts` / `.extensions` declared.
-   - Timeout aborts at `timeoutMs` (shim's sleep path uses `exec sleep` so SIGKILL from `subprocess.run` hits the actual blocker, not the bash wrapper).
+   - Argv assertion: the shim records the full argv; tests verify the expected `-o ConnectTimeout` / `-o ServerAliveInterval` / `-o ServerAliveCountMax` options reach ssh.
    - Default getters return empty when no agentsFiles declared.
 8. End-to-end verified against real ssh to `127.0.0.1`: ~70ms round-trip, exit 255 / "Host key verification failed." stderr forwarded cleanly.
 
-**Acceptance**: SSH source contributes AGENTS files from a remote host. Failure modes (timeout, non-zero exit, missing path) surface as diagnostics, not exceptions. **Shipped on `feat/v0.6-foundation-refactor` (commits `2cdc385`, `b13ddde`, `5869a40`, `7685200`).**
+**Acceptance**: SSH source contributes AGENTS files from a remote host. Failure modes (timeout, non-zero exit, missing path) surface as diagnostics, not exceptions. **Shipped on `feat/v0.6-foundation-refactor` (commits `2cdc385`, `b13ddde`, `5869a40`, `c610bb5`).**
 
 ### Phase 4 — HTTP backend
 
