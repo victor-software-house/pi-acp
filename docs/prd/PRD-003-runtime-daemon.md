@@ -570,3 +570,22 @@ Post-implementation checklist:
 8. `pi-acp --daemon-stop` triggers graceful shutdown within 5s.
 9. SIGKILL on daemon leaves stale lockfile; next client invocation detects PID-not-alive and reclaims.
 10. Crashing one connection's agent does NOT crash daemon or other connections.
+
+---
+
+## 16. Implementation Skill References
+
+Skills that MUST be loaded before working on the listed components. Skipping them is a process failure.
+
+| Component | Skill | Why |
+|---|---|---|
+| Control plane (`src/daemon/control.ts`, `src/client/operator.ts`) | `hono` | Hono `app.request()` testing, `c.req.json<T>()`, `HTTPException` + `app.onError`, never use deprecated APIs (`app.fire`, `c.req.routePath`, `c.req.matchedRoutes`, `createBunWebSocket`, `getBunServer`). For UDS dial, use `Bun.fetch` with the `unix` option, not Node `http`. Chain handlers for RPC type inference; pass explicit status codes to `c.json(data, 200)`. |
+| Auto-spawn / subprocess invocations | `bun-shell` | When the daemon or client needs to invoke external binaries (test fixtures, CI helpers), prefer `$` template over `Bun.spawn`. `Bun.spawn` only when IPC / PTY / AbortSignal / FileSink stdin / timeout opts are needed. Reserved for one-off helper scripts: uv-shebanged Python under `scripts/`. |
+| Daemon TS strictness | `typescript-type-safety` | Ultra-strict tsconfig (`noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`); `import * as z from 'zod'` namespace; `safeParse`; `ts-pattern` for exhaustive matching on `SessionEntry` state or control-plane request union. |
+| Control-plane request/response shapes | `zod` | Validate every inbound control-socket request body via `@hono/zod-validator` against a Zod v4 schema (`zValidator('json', schema)`). Reject unknown keys via `.strict()`. |
+| Pre-push gates | `lefthook-config` | Thin-caller pattern — `lefthook.yml` delegates to `mise run …` tasks. Pre-push runs `mise run release:check-published`, full typecheck, full lint. |
+| Linting | `linting-stack` | Biome (format / general) + oxlint (TS deep rules + zod plugin). Root config; no per-package overrides. |
+| Release pipeline | `greenfield-release` | Currently semantic-release; future migration to Changesets behind ADR. Trusted-publishing scope tracked. |
+| Tool versions / env | `mise` | All hooks shell through `mise run …`. fnox-backed env via `_.fnox-env`. No global `mise activate`. |
+
+Load skill via `/skill:<name>` before writing the code for that component.

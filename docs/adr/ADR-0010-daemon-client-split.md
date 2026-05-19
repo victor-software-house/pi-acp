@@ -126,3 +126,4 @@ Three v1.0 decisions reversed before any v0.6 phase shipped:
 - **PRD**: `docs/prd/PRD-003-runtime-daemon.md`.
 - **Plan**: `docs/architecture/plan-runtime-daemon.md`.
 - **ADRs**: ADR-0001 (standalone server — daemon is the same bin, dispatched differently); ADR-0006..0009 (PRD-002 backends — beneficiaries of daemon's shared singletons).
+- **Implementation skills** (`~/.agents/skills/` chezmoi-managed): `hono` (control plane), `bun-shell` (subprocess + tmpdir), `zod` + `typescript-type-safety` (schemas), `linting-stack`, `lefthook-config`, `greenfield-release`, `mise`. Canonical FR → skill mapping in PRD-003 §16. Skip them = process failure.

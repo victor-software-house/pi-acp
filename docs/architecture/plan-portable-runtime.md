@@ -43,6 +43,21 @@ Plus two surface features:
 - `bin: pi-acp`, `--terminal-login`, semantic-release pipeline untouched.
 - No fork of `@earendil-works/pi-coding-agent`.
 
+## Mandatory Skill Loads
+
+| Phase / file | Load before edits |
+|---|---|
+| Phase 2 (`src/resources/manifest.ts`, `manifest.schema.ts`) | `zod`, `typescript-type-safety` |
+| Phase 3 (`src/resources/sources/ssh.ts`) | `bun-shell` (uv-shebanged Python under `scripts/` only for non-runtime helpers) |
+| Phase 4 (`src/resources/sources/http.ts`) | `typescript-type-safety` (Bun.fetch + Zod response shapes) |
+| Phase 5 (`src/resources/sources/acp-fs.ts`, `src/resources/tools/acp-read.ts`) | `pi-tool-progressive-disclosure`, `pi-extension-writing` |
+| Phase 6 (`src/resources/tools/import-resource.ts`) | `pi-tool-progressive-disclosure`, `pi-extension-writing` |
+| Phase 7 (`src/resources/modes.ts` tmpdir lifecycle) | `bun-shell` (`$\`mktemp -d …\``) |
+| Phase 8 (diagnostics surface) | `pi-rendering-style`, `pi-footer-status` |
+| Any phase (lint / pre-push / release) | `linting-stack`, `lefthook-config`, `greenfield-release` |
+
+The full mapping (FR → skill, with rationale) lives in PRD-002 §16.
+
 ## Components
 
 ### `VirtualResourceLoader` (new — `src/resources/loader.ts`)
@@ -67,7 +82,7 @@ Plus two surface features:
 - `base.ts` — shared `ResourceSource` interface + helpers (path normalization, skill parsing, prompt frontmatter parsing).
 - `local.ts` — `LocalBackend`. Wraps pi's `loadProjectContextFiles`, `loadSkills`, `loadSkillsFromDir` for one root. No remote calls.
 - `acp-fs.ts` — `AcpFsBackend`. Reads via `connection.fs.readTextFile`. Listing relies on manifest-declared file lists (ACP has no `fs/listDir`).
-- `ssh.ts` — `SshBackend`. `child_process.spawn("ssh", ...)` for reads (`ssh user@host cat path`) and listings (`ssh user@host find path -maxdepth 1 -type f`). Per-operation 5s timeout. Inherits user's `~/.ssh/config`.
+- `ssh.ts` — `SshBackend`. Bun Shell `$` template for reads (`await $\`ssh ${user}@${host} cat ${path}\`.text()`) and listings (`await $\`ssh ${user}@${host} find ${path} -maxdepth 1 -type f\`.text()`). Per-operation 5s timeout via `.timeout(5000)`. Auto-escaped interpolations. Inherits user's `~/.ssh/config`. *(Skill: `bun-shell` mandatory before edits here. uv-shebanged Python under `scripts/` for non-runtime helper scripts only.)*
 - `http.ts` — `HttpBackend`. HTTPS-only `fetch`. Per-source `cache.ttl` (default 300s, in-memory).
 
 **ADR Reference**: ADR-0007 (delegation gate for `acp-fs`).
@@ -78,7 +93,7 @@ Plus two surface features:
 
 **Key details**:
 
-- Zod schema in `manifest.schema.ts`. Validates `version: 1`, `mode`, each `root`'s shape per `kind`, `mergeStrategy`, optional `auto-import` and `diagnostics`.
+- Zod schema in `manifest.schema.ts`. Validates `version: 1`, `mode`, each `root`'s shape per `kind`, `mergeStrategy`, optional `auto-import` and `diagnostics`. *(Skills: `zod` + `typescript-type-safety` mandatory. `import * as z from 'zod'` namespace; `safeParse` only; `z.enum` for `mode`/`mergeStrategy`; discriminated union on `root.kind` for O(1) validation.)*
 - Cascade resolver in `manifest.ts`:
   1. ACP session params (`params._meta.piAcp.manifest` — full inline manifest or path).
   2. Project (`<cwd>/.pi-acp.yaml`).
@@ -100,6 +115,8 @@ Plus two surface features:
 
 Both registered via `createAgentSession({ customTools })`. `read` delegation also passes `tools: ["bash", "edit", "write", "grep", "find", "ls"]` to disable pi's built-in `read`.
 
+*(Skills: `pi-tool-progressive-disclosure` mandatory for both files. Use `StringEnum` over `anyOf`/`oneOf`; keep `promptSnippet` minimal; gate `import_resource` activation via `setActiveTools()` so it stays out of the model-visible set when no non-local source is configured. `pi-extension-writing` references `custom-tools-and-tool-overrides.md` for the override contract.)*
+
 **ADR Reference**: ADR-0007 (`acp-read`), no ADR for `import_resource` (mechanical extension of FR-4).
 
 ### Cwd modes (new — `src/resources/modes.ts`)
@@ -109,7 +126,7 @@ Both registered via `createAgentSession({ customTools })`. `read` delegation als
 **Key details**:
 
 - `resolveMode(manifest, params)` returns the effective mode after cascade.
-- `createTmpdirCwd(sessionId)` for `none` mode — creates `os.tmpdir() + "/pi-acp-session-<id>/"` with mode `0700`.
+- `createTmpdirCwd(sessionId)` for `none` mode — creates `os.tmpdir() + "/pi-acp-session-<id>/"` with mode `0700`. Implementation prefers `await $\`mktemp -d ${tmpRoot}/pi-acp-session-${sessionId}-XXXXXX\`.text()` (skill: `bun-shell`).
 - Cleanup hooks bound to `session/close`, `AgentSideConnection.closed`, and SIGINT/SIGTERM (reuses existing `shuttingDown` guard from v0.5).
 - `overlay` mode is the manifest's responsibility — `modes.ts` just confirms the primary cwd is valid; aux roots are resolved by the loader.
 

@@ -33,6 +33,20 @@ The v0.5 binary's `PiAcpAgent` + ACP wiring moves wholesale into the daemon. The
 - `bin: pi-acp` shape preserved.
 - Console redirect to stderr (PRD-001 FR-5) applies in both client and daemon modes.
 
+## Mandatory Skill Loads
+
+| Touching | Load before edits |
+|---|---|
+| `src/daemon/control.ts`, `src/client/operator.ts` (Hono control plane) | `hono` |
+| Any subprocess (`Bun.spawn` or `$`) in `src/`, `test/`, `scripts/` | `bun-shell` |
+| Schema work (manifest, control-plane request/response, session state) | `zod`, `typescript-type-safety` |
+| Lint / format failures | `linting-stack` |
+| Pre-push / commit-msg / lefthook | `lefthook-config` |
+| Release / version bumps / publish flow | `greenfield-release` |
+| Tool versions, env, fnox refs | `mise` |
+
+If you start editing a component without the relevant skill in context, stop and load it via `/skill:<name>`. The Implementation Skill References table in PRD-003 §16 is the canonical map.
+
 ## Components
 
 ### Mode router (`src/index.ts` modify)

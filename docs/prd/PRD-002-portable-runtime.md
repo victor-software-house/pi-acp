@@ -203,7 +203,7 @@ interface ResourceSource {
 
 - **`LocalBackend`** — wraps `DefaultResourceLoader` semantics for one root. No remote calls. Reuses pi's existing `loadSkills`, `loadProjectContextFiles` helpers where possible.
 - **`AcpFsBackend`** — delegates reads through the bound `AgentSideConnection.fs.readTextFile({ path })`. Only enabled if `clientCapabilities.fs.readTextFile === true`. Supports listing through a manifest-declared file list (the ACP spec does not currently expose `fs/listDir`).
-- **`SshBackend`** — uses the system `ssh` command via `child_process.spawn`. Reads: `ssh user@host cat <path>`. Listings: `ssh user@host find <path> -maxdepth 1 -type f`. Honors user's `~/.ssh/config` (ProxyJump, ControlMaster, agent forwarding). Hard timeout per operation (default 5s). No in-process SFTP dependency.
+- **`SshBackend`** — uses the system `ssh` command via the Bun Shell `$` template (`await $\`ssh ${user}@${host} cat ${path}\`.text()`), not `child_process.spawn`. Interpolations are auto-escaped (injection-safe). Listings: `await $\`ssh ${user}@${host} find ${path} -maxdepth 1 -type f\`.text()`. Honors user's `~/.ssh/config` (ProxyJump, ControlMaster, agent forwarding). Hard timeout per operation (default 5s) via `.timeout(5000)` on the `$` builder. No in-process SFTP dependency. Helper scripts that do not justify a TypeScript module (e.g., one-off fixture seeders) live as uv-shebanged Python files under `scripts/` (`#!/usr/bin/env -S uv run --script` with PEP 723 inline metadata) and are invoked the same way from `$`. See the `bun-shell` skill for `$` semantics / redirection / security model and the `uv-python-cli` skill for the shebang + inline-deps pattern. Two-tool policy: Bun Shell for everything reachable from TypeScript; uv-shebanged Python only for the narrow case where Python ecosystem is genuinely better (e.g., richer CLI parsing via typer, scientific libs).
 - **`HttpBackend`** — HTTPS-only `fetch`. Supports GitHub raw URLs, gist content, public CDN. Per-source `cache.ttl` in seconds (default 300). No write semantics.
 
 **Acceptance criteria:**
@@ -274,7 +274,7 @@ diagnostics: false
 3. User-global: `~/.pi-acp/config.yaml`.
 4. Synthesized default: `{ version: 1, mode: "local", roots: [{ id: "local", kind: "local", paths: { cwd: ".", agentDir: "~/.pi/agent" } }], mergeStrategy: "append" }`.
 
-Manifest schema validated with Zod at load time. Unknown keys surface as warning diagnostics, not fatal.
+Manifest schema validated with **Zod v4** at load time (`import * as z from 'zod'` — namespace import, never named). Always `safeParse()`, never `parse()`. Unknown keys surface as warning diagnostics, not fatal. `mode` is `z.enum(["local", "overlay", "none"])`; `mergeStrategy` is `z.enum(["append", "override-by-name"])`. See the `zod` and `typescript-type-safety` skills (latter for `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes` interaction with optional schema fields, plus `ts-pattern` for exhaustive matching over the parsed manifest variant).
 
 **Acceptance criteria:**
 
@@ -291,6 +291,8 @@ Then the param manifest fully overrides both file-based manifests
 ```
 
 ### FR-4: `import_resource` custom tool
+
+> **Mandatory skill**: `pi-tool-progressive-disclosure` — model-facing tool. Keep `description`, `promptSnippet`, parameter schema minimal. Prefer `StringEnum` over `anyOf`/`oneOf` for the `kind` argument. Tool stays inactive by default and is enabled via `pi.setActiveTools()` when a manifest declares at least one non-local source (avoids burning context when no remote sources exist). See also `pi-extension-writing` for `customTools` lifecycle.
 
 Registered via `createAgentSession({ customTools: [importResourceTool] })`. Tool signature:
 
@@ -357,6 +359,8 @@ And resources come from local + http combined
 ```
 
 ### FR-6: ACP-FS delegation for `read` tool
+
+> **Mandatory skill**: `pi-tool-progressive-disclosure` — replacing pi's built-in `read` with a customTool changes what the model sees. The override's `description` and parameter schema must match the built-in's surface area exactly (same name, same args) so the model is unaware of the indirection. See `pi-extension-writing` references on `custom-tools-and-tool-overrides.md` for the override contract.
 
 When `clientCapabilities.fs.readTextFile === true`:
 
@@ -650,3 +654,25 @@ Post-implementation checklist:
 8. `import_resource` tool callable from a model session; returns success summary; subsequent `getSkills()` reflects the import.
 9. `none` mode session: `os.tmpdir()/pi-acp-session-*/` exists during session; gone after session close.
 10. Zed Remote dev-box: open a remote project; `read` tool calls land on the remote FS (verified by inspecting the file path returned).
+
+---
+
+## 16. Implementation Skill References
+
+Skills under `~/.agents/skills/` (chezmoi-managed) and `~/.pi/agent/skills/` (pi agent) that MUST be loaded before working on the listed FRs. Skipping them is a process failure.
+
+| FR | Skill | Why |
+|---|---|---|
+| FR-2 (`LocalBackend`) | `typescript-type-safety`, `zod` | Strict TS + Zod for any persisted shape; pi `DefaultResourceLoader` wrapping. |
+| FR-2 (`SshBackend`) | `bun-shell`, `uv-python-cli` | `$` template is the canonical subprocess API; uv-shebanged Python for helper scripts. No `child_process.spawn`. |
+| FR-2 (`HttpBackend`) | `typescript-type-safety` | `Bun.fetch` + Zod-validated response envelopes. |
+| FR-2 (`AcpFsBackend`) | `pi-extension-writing` (`custom-tools-and-tool-overrides.md`) | Backend bound to per-connection `AgentSideConnection`. |
+| FR-3 (manifest) | `zod`, `typescript-type-safety` | Zod v4 namespace import, `safeParse`, `ts-pattern` for variant matching. |
+| FR-4 (`import_resource`) | `pi-tool-progressive-disclosure`, `pi-extension-writing` | Mandatory for any new model-facing tool. `StringEnum`, minimal `promptSnippet`, `setActiveTools()` gating. |
+| FR-5 (cwd modes) | `bun-shell` | `$\`mktemp -d ${tmpRoot}/pi-acp-session-XXXXXX\`` for `none`-mode tmpdir. |
+| FR-6 (ACP-FS `read` override) | `pi-tool-progressive-disclosure`, `pi-extension-writing` | Tool-override contract — name + arg schema must mirror built-in `read` exactly. |
+| FR-7 (diagnostics) | `pi-rendering-style`, `pi-footer-status` | Operator-visible surface; follow pi's renderer conventions. |
+| All FRs (tests) | `linting-stack`, `lefthook-config` | Biome + oxlint (+ oxlint-zod plugin); pre-push runs full verify. |
+| All FRs (release) | `greenfield-release` | Future migration to Changesets; current semantic-release path documented as legacy. |
+
+Load skill via `/skill:<name>` before writing the code for that FR. Worktree-scoped reads stay loaded for the duration of that phase.
