@@ -3,6 +3,12 @@
  *
  * Both reference implementations (claude-agent-acp, codex-acp) store and
  * use `clientCapabilities` for feature detection and auth method selection.
+ *
+ * Reads from:
+ * - `_meta.terminal_output` — terminal output rendering
+ * - `_meta.terminal-auth`   — terminal auth with command metadata
+ * - `auth._meta.gateway`    — gateway auth (non-standard extension)
+ * - `fs.readTextFile`       — typed spec-stable surface (PRD-002 §FR-6)
  */
 
 import type { ClientCapabilities } from "@agentclientprotocol/sdk";
@@ -18,46 +24,29 @@ export interface ClientCapabilityFlags {
 	fsReadTextFile: boolean;
 }
 
-/**
- * Extract well-known capability flags from ACP `ClientCapabilities`.
- *
- * Reads from:
- * - `_meta.terminal_output` (terminal output rendering)
- * - `_meta.terminal-auth` (terminal auth with command metadata)
- * - `auth._meta.gateway` (gateway auth, future use)
- */
 export function parseClientCapabilities(
 	caps: ClientCapabilities | undefined | null,
 ): ClientCapabilityFlags {
-	if (caps === undefined || caps === null) {
-		return {
-			terminalOutput: false,
-			terminalAuth: false,
-			gatewayAuth: false,
-			fsReadTextFile: false,
-		};
-	}
+	// Single code path: treat null/undefined as an empty capabilities object.
+	// Each flag's check is the source of truth for both the present and
+	// absent cases — no parallel default branch to drift out of sync when
+	// adding a new flag.
+	const safe = caps ?? ({} as ClientCapabilities);
 
-	// _meta is an optional declared property, safe to access with dot
-	const meta = caps._meta;
-	const terminalOutput =
-		typeof meta === "object" && meta !== null && meta["terminal_output"] === true;
-	const terminalAuth = typeof meta === "object" && meta !== null && meta["terminal-auth"] === true;
+	const meta = safe._meta;
+	const metaIsObject = typeof meta === "object" && meta !== null;
 
-	// gateway auth lives under auth._meta.gateway (non-standard extension)
-	let gatewayAuth = false;
-	if ("auth" in caps) {
-		const auth = caps.auth;
-		if (typeof auth === "object" && auth !== null && "_meta" in auth) {
-			const authMeta = auth._meta;
-			if (typeof authMeta === "object" && authMeta !== null && "gateway" in authMeta) {
-				gatewayAuth = authMeta["gateway"] === true;
-			}
-		}
-	}
+	const authMeta =
+		"auth" in safe && typeof safe.auth === "object" && safe.auth !== null && "_meta" in safe.auth
+			? safe.auth._meta
+			: undefined;
+	const authMetaIsObject = typeof authMeta === "object" && authMeta !== null;
 
-	// fs.readTextFile is the typed, spec-stable capability surface.
-	const fsReadTextFile = caps.fs?.readTextFile === true;
-
-	return { terminalOutput, terminalAuth, gatewayAuth, fsReadTextFile };
+	// biome-ignore lint/complexity/useLiteralKeys: tsc strict-mode index-signature access
+	return {
+		terminalOutput: metaIsObject && meta["terminal_output"] === true,
+		terminalAuth: metaIsObject && meta["terminal-auth"] === true,
+		gatewayAuth: authMetaIsObject && authMeta["gateway"] === true,
+		fsReadTextFile: safe.fs?.readTextFile === true,
+	};
 }
